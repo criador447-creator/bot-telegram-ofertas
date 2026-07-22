@@ -46,7 +46,7 @@ async def processar_oferta(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_message(
             chat_id=ID_CANAL,
             text=mensagem_formatada,
-            parse_mode="Markdown"
+            disable_web_page_preview=false
         )
         await update.message.reply_text("✅ Oferta enviada para o canal!")
     except Exception as e:

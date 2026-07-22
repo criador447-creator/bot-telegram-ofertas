@@ -1,22 +1,29 @@
 import os
-import re
+import time
+import requests
 import logging
 from threading import Thread
 from flask import Flask
-from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
+from telegram import Bot
 
-# --- CONFIGURAÇÕES DE AFILIADO ---
-# Coloque aqui a sua Tag/SubID de Afiliado
-TAG_SHOPEE = os.getenv("TAG_SHOPEE", "18176880013") 
+# --- CONFIGURAÇÕES E CREDENCIAIS ---
+TOKEN_BOT = os.getenv("TOKEN_BOT", "8424473006:AAFlnQJyB55mf1RMRwFsHmVZvFED4LLliqQ")
+ID_CANAL = os.getenv("ID_CANAL", "-1003788628286")
 TAG_MERCADO_LIVRE = os.getenv("TAG_ML", "salu8535714")
 
-# --- SERVIDOR WEB (KEEP ALIVE) ---
+# Credenciais da API do Mercado Livre (coloque as suas aqui ou no Render)
+ML_CLIENT_ID = os.getenv("3774054197554006")
+ML_CLIENT_SECRET = os.getenv("ML_CLIENT_SECRET", "geNE24TeMJRCG5AR8vtzPGETBuKCWm9P")
+
+# Tempo entre postagens (30 minutos = 1800 segundos)
+INTERVALO_POSTAGEM = 1800 
+
+# --- SERVIDOR WEB (KEEP ALIVE DO RENDER) ---
 app_web = Flask('')
 
 @app_web.route('/')
 def home():
-    return "Bot de Afiliados Automático Ativo!"
+    return "Bot de Ofertas Automático Rodando a cada 30 min!"
 
 def run_web():
     port = int(os.environ.get('PORT', 8080))
@@ -27,63 +34,84 @@ def keep_alive():
     t.daemon = True
     t.start()
 
-# --- LÓGICA DO BOT ---
-logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
-
-TOKEN_BOT = os.getenv("TOKEN_BOT", "8424473006:AAFlnQJyB55mf1RMRwFsHmVZvFED4LLliqQ")
-ID_CANAL = os.getenv("ID_CANAL", "-1003788628286")
-
-def converter_link_afiliado(texto):
-    """Detecta links no texto e insere a tag de afiliado"""
-    # Encontra URLs no texto enviado
-    urls = re.findall(r'(https?://[^\s]+)', texto)
-    
-    texto_convertido = texto
-    for url in urls:
-        # Se for link do Mercado Livre
-        if "mercadolivre.com" in url or "mercadolibre.com" in url:
-            link_afiliado = f"{url}?matt_tool={TAG_MERCADO_LIVRE}" if "?" not in url else f"{url}&matt_tool={salu8535714}"
-            texto_convertido = texto_convertido.replace(url, link_afiliado)
-            
-        # Se for link da Shopee
-        elif "shopee.com" in url or "shp.ee" in url:
-            link_afiliado = f"{url}?smtt={TAG_SHOPEE}" if "?" not in url else f"{url}&smtt={TAG_SHOPEE}"
-            texto_convertido = texto_convertido.replace(url, link_afiliado)
-            
-    return texto_convertido
-
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("🤖 Bot Automático Online! Envie um texto com qualquer link que eu converto para seu afiliado e posto no canal.")
-
-async def processar_oferta(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    texto_usuario = update.message.text
-    
-    # Converte os links normais para links de afiliado
-    texto_com_afiliado = converter_link_afiliado(texto_usuario)
-    
-    mensagem_formatada = (
-        "🔥 **OFERTA IMPERDÍVEL!** 🔥\n\n"
-        f"{texto_com_afiliado}\n\n"
-        "⚡️ *Gostou? Clique no link acima para garantir com desconto!*"
-    )
-    
+# --- BUSCA DE OFERTA NA API DO MERCADO LIVRE ---
+def buscar_oferta_mercadolivre():
+    """Busca produtos em promoção/desconto no Mercado Livre via API"""
     try:
-        await context.bot.send_message(
-            chat_id=ID_CANAL,
-            text=mensagem_formatada,
-            parse_mode="Markdown",
-            disable_web_page_preview=False
-        )
-        await update.message.reply_text("✅ Oferta convertida e enviada para o canal com sucesso!")
+        # Busca produtos em destaque com desconto no Brasil (MLB)
+        url = "https://api.mercadolibre.com/sites/MLB/search?q=ofertas_do_dia&limit=20"
+        response = requests.get(url, timeout=10)
+        
+        if response.status_code == 200:
+            dados = response.json()
+            resultados = dados.get("results", [])
+            
+            if resultados:
+                # Pega um produto da lista
+                import random
+                produto = random.choice(resultados)
+                
+                titulo = produto.get("title")
+                preco = produto.get("price")
+                link_original = produto.get("permalink")
+                
+                # Monta o link de afiliado com a sua tag
+                link_afiliado = f"{link_original}?matt_tool={TAG_MERCADO_LIVRE}" if "?" not in link_original else f"{link_original}&matt_tool={TAG_MERCADO_LIVRE}"
+                
+                return {
+                    "titulo": titulo,
+                    "preco": preco,
+                    "link": link_afiliado
+                }
     except Exception as e:
-        await update.message.reply_text(f"❌ Erro ao enviar: {e}")
+        print(f"Erro ao buscar oferta na API: {e}")
+    
+    return None
+
+# --- LOOP AUTOMÁTICO DE POSTAGEM ---
+def loop_postagem_automatica():
+    """Roda continuamente postando uma oferta a cada 30 minutos"""
+    bot = Bot(token=TOKEN_BOT)
+    print("🚀 Loop de postagem automática iniciado (30 minutos)...")
+    
+    while True:
+        try:
+            oferta = buscar_oferta_mercadolivre()
+            
+            if oferta:
+                mensagem = (
+                    "🔥 **OFERTA IMPERDÍVEL DO DIA!** 🔥\n\n"
+                    f"📦 **{oferta['titulo']}**\n"
+                    f"💰 **Preço:** R$ {oferta['preco']:.2f}\n\n"
+                    f"👉 **Garantir com Desconto:** {oferta['link']}\n\n"
+                    "⚡️ *Aproveite antes que o estoque acabe!*"
+                )
+                
+                # Envia direto para o canal
+                bot.send_message(
+                    chat_id=ID_CANAL,
+                    text=mensagem,
+                    parse_mode="Markdown",
+                    disable_web_page_preview=False
+                )
+                print("✅ Oferta postada com sucesso no canal!")
+            else:
+                print("⚠️ Não foi possível obter uma oferta nesta tentativa.")
+                
+        except Exception as e:
+            print(f"❌ Erro na postagem automática: {e}")
+            
+        # Aguarda 30 minutos até a próxima postagem
+        time.sleep(INTERVALO_POSTAGEM)
 
 if __name__ == '__main__':
-    keep_alive()
+    keep_alive()  # Inicia servidor Flask
     
-    app = ApplicationBuilder().token(TOKEN_BOT).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), processar_oferta))
+    # Inicia o loop de postagem em segundo plano
+    t_post = Thread(target=loop_postagem_automatica)
+    t_post.daemon = True
+    t_post.start()
     
-    print("Bot rodando...")
-    app.run_polling()
+    # Mantém o script rodando
+    while True:
+        time.sleep(60)

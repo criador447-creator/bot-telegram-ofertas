@@ -37,18 +37,18 @@ async def processar_oferta(update: Update, context: ContextTypes.DEFAULT_TYPE):
     texto_usuario = update.message.text
     
     mensagem_formatada = (
-        "🔥 *OFERTA IMPERDÍVEL ENCONTRADA!* 🔥\n\n"
+        "🔥 OFERTA IMPERDÍVEL ENCONTRADA! 🔥\n\n"
         f"{texto_usuario}\n\n"
-        "⚡️ *Gostou? Clique no link acima para garantir com desconto!*"
+        "⚡️ Gostou? Clique no link acima para garantir com desconto!"
     )
     
     try:
         await context.bot.send_message(
-            chat_id=ID_CANAL,
+            chat_id=-1003788628286,
             text=mensagem_formatada,
-            disable_web_page_preview=false
+            disable_web_page_preview=False
         )
-        await update.message.reply_text("✅ Oferta enviada para o canal!")
+        await update.message.reply_text("✅ Oferta enviada para o canal com sucesso!")
     except Exception as e:
         await update.message.reply_text(f"❌ Erro ao enviar: {e}")
 

@@ -3,7 +3,7 @@ import time
 import random
 import requests
 from threading import Thread
-from flask import Flask
+from flask import Flask 
 from telegram import Bot
 
 # --- CONFIGURAÇÕES E CREDENCIAIS ---

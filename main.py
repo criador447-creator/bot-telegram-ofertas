@@ -3,7 +3,7 @@ import time
 import random
 import requests
 from threading import Thread
-from flask import Flask 
+from flask import Flask
 from telegram import Bot
 
 # --- CONFIGURAÇÕES E CREDENCIAIS ---
@@ -12,7 +12,7 @@ ID_CANAL = os.getenv("ID_CANAL", "-1003788628286")
 
 # Tags de Afiliado
 TAG_MERCADO_LIVRE = os.getenv("TAG_ML", "salu8535714")
-TAG_SHOPEE = os.getenv("TAG_SHOPEE", "18176880013")
+TAG_SHOPEE = os.getenv("TAG_SHOPEE", "SUA_TAG_SHOPEE_AQUI")
 
 # Credenciais API Mercado Livre
 ML_CLIENT_ID = os.getenv("ML_CLIENT_ID", "3774054197554006")
@@ -20,7 +20,7 @@ ML_CLIENT_SECRET = os.getenv("ML_CLIENT_SECRET", "geNE24TeMJRCG5AR8vtzPGETBuKCWm
 
 # Credenciais API Shopee
 SHOPEE_APP_ID = os.getenv("SHOPEE_APP_ID", "18176880013")
-SHOPEE_SECRET = os.getenv("SHOPEE_SECRET", "4XA35B6ATAXB2KCN2F6MBY632DNPXFCG")
+SHOPEE_SECRET = os.getenv("SHOPEE_SECRET", "4XA35B6ATAXB2KGN2F6MBY632DNPXFCG")
 
 # Intervalo padrão de postagem: 10 minutos (600 segundos)
 INTERVALO_POSTAGEM = 600 

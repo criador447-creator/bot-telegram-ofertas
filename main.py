@@ -29,7 +29,7 @@ LINK_DIVULGACAO_CANAL = os.getenv("LINK_CANAL", "https://t.me/seu_canal_aqui")
 TAG_MERCADO_LIVRE = os.getenv("TAG_ML", "salu8535714")
 TAG_SHOPEE = os.getenv("TAG_SHOPEE", "18176880013")
 
-INTERVALO_POSTAGEM = 600  # 10 minutos
+INTERVALO_POSTAGEM = 600  # 1 minutos
 
 # --- BANCO DE DADOS EM MEMÓRIA PARA O RADAR DE DESEJOS (Função 1) ---
 # Estrutura: [{"user_id": 12345, "termo": "air fryer", "preco_max": 200.0}]

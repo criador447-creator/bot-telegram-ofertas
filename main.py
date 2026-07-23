@@ -10,27 +10,17 @@ from telegram import Bot
 TOKEN_BOT = os.getenv("TOKEN_BOT", "8424473006:AAFlnQJyB55mf1RMRwFsHmVZvFED4LLliqQ")
 ID_CANAL = os.getenv("ID_CANAL", "-1003788628286")
 
-# Tags de Afiliado
 TAG_MERCADO_LIVRE = os.getenv("TAG_ML", "salu8535714")
 TAG_SHOPEE = os.getenv("TAG_SHOPEE", "18176880013")
 
-# Credenciais API Mercado Livre
-ML_CLIENT_ID = os.getenv("ML_CLIENT_ID", "3774054197554006")
-ML_CLIENT_SECRET = os.getenv("ML_CLIENT_SECRET", "geNE24TeMJRCG5AR8vtzPGETBuKCWm9P")
+INTERVALO_POSTAGEM = 600 # 10 minutos
 
-# Credenciais API Shopee
-SHOPEE_APP_ID = os.getenv("SHOPEE_APP_ID", "18176880013")
-SHOPEE_SECRET = os.getenv("SHOPEE_SECRET", "4XA35B6ATAXB2KGN2F6MBY632DNPXFCG")
-
-# Intervalo padrao: 10 minutos (600 segundos)
-INTERVALO_POSTAGEM = 600
-
-# --- SERVIDOR WEB (KEEP ALIVE DO RENDER) ---
+# --- SERVIDOR WEB (KEEP ALIVE) ---
 app_web = Flask('')
 
 @app_web.route('/')
 def home():
-    return "Bot de Ofertas ML + Shopee + Detector de Bugs Ativo!"
+    return "Bot de Ofertas Ativo!"
 
 def run_web():
     port = int(os.environ.get('PORT', 8080))
@@ -44,8 +34,9 @@ def keep_alive():
 # --- BUSCA MERCADO LIVRE ---
 def buscar_oferta_mercadolivre():
     try:
-        url = "https://api.mercadolibre.com/sites/MLB/search?q=ofertas_relampago&limit=30"
-        response = requests.get(url, timeout=10)
+        url = "https://api.mercadolibre.com/sites/MLB/search?q=promocao&limit=30"
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+        response = requests.get(url, headers=headers, timeout=10)
         
         if response.status_code == 200:
             dados = response.json()
@@ -71,22 +62,28 @@ def buscar_oferta_mercadolivre():
                     "desconto": desconto,
                     "link": link_afiliado
                 }
+        else:
+            print(f"⚠️ Mercado Livre respondeu com status: {response.status_code}")
     except Exception as e:
-        print(f"Erro ML: {e}")
+        print(f"❌ Erro ML: {e}")
     return None
 
 # --- BUSCA SHOPEE ---
 def buscar_oferta_shopee():
     try:
-        url = "https://shopee.com.br/api/v4/search/search_items?keyword=ofertas%20do%20dia&limit=30"
-        headers = {"User-Agent": "Mozilla/5.0"}
+        # Busca alternativa para contornar bloqueios simples
+        url = "https://shopee.com.br/api/v4/recommend/recommend_items?bundle=daily_discover_main&limit=30"
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Referer": "https://shopee.com.br/"
+        }
         response = requests.get(url, headers=headers, timeout=10)
         
         if response.status_code == 200:
             dados = response.json()
-            items = dados.get("items", [])
+            items = dados.get("data", {}).get("sections", [{}])[0].get("data", {}).get("item", [])
             if items:
-                item_info = random.choice(items).get("item_basic", {})
+                item_info = random.choice(items)
                 titulo = item_info.get("name")
                 preco_atual = item_info.get("price", 0) / 100000
                 preco_original = item_info.get("price_before_discount", 0) / 100000
@@ -108,8 +105,10 @@ def buscar_oferta_shopee():
                     "desconto": desconto,
                     "link": link_afiliado
                 }
+        else:
+            print(f"⚠️ Shopee bloqueou a requisição (Status {response.status_code})")
     except Exception as e:
-        print(f"Erro Shopee: {e}")
+        print(f"❌ Erro Shopee: {e}")
     return None
 
 # --- ENVIO DE MENSAGEM ---
@@ -120,8 +119,7 @@ def enviar_mensagem_canal(bot, oferta):
             f"📦 **{oferta['titulo']}**\n"
             f"❌ De: ~~R$ {oferta['preco_original']:.2f}~~\n"
             f"🔥 **Por apenas: R$ {oferta['preco_atual']:.2f}** ({oferta['desconto']}% OFF!)\n\n"
-            f"👉 **CORRA ANTES QUE ACABE ({oferta['origem']}):** {oferta['link']}\n\n"
-            "⚠️ *Preço extremamente baixo ou possível erro no sistema!*"
+            f"👉 **CORRA ANTES QUE ACABE ({oferta['origem']}):** {oferta['link']}"
         )
     else:
         preco_texto = f"💰 **Preço:** R$ {oferta['preco_atual']:.2f}"
@@ -132,8 +130,7 @@ def enviar_mensagem_canal(bot, oferta):
             f"🔥 **OFERTA IMPERDÍVEL ({oferta['origem'].upper()})!** 🔥\n\n"
             f"📦 **{oferta['titulo']}**\n"
             f"{preco_texto}\n\n"
-            f"👉 **Garantir na {oferta['origem']}:** {oferta['link']}\n\n"
-            "⚡️ *Aproveite antes que o estoque acabe!*"
+            f"👉 **Garantir na {oferta['origem']}:** {oferta['link']}"
         )
         
     bot.send_message(
@@ -144,17 +141,22 @@ def enviar_mensagem_canal(bot, oferta):
     )
     print(f"✅ Oferta enviada ({oferta['origem']}) - Desconto: {oferta['desconto']}%")
 
-# --- LOOP AUTOMÁTICO DE 10 MINUTOS ---
+# --- LOOP AUTOMÁTICO ---
 def loop_postagem_automatica():
     bot = Bot(token=TOKEN_BOT)
-    print("🚀 Loop de 10 minutos (ML + Shopee + Bugs) iniciado...")
     
+    # 🧪 TESTE INICIAL: Envia mensagem imediatamente ao ligar
+    try:
+        bot.send_message(chat_id=ID_CANAL, text="🤖 **Bot de Ofertas iniciado com sucesso!** Acompanhe as postagens automaticamente.")
+        print("✅ Mensagem de teste inicial enviada para o canal!")
+    except Exception as e:
+        print(f"❌ Erro no teste inicial (Verifique se o bot é Admin do canal): {e}")
+
     plataforma_atual = "ML"
     
     while True:
         try:
             oferta = None
-            
             if plataforma_atual == "ML":
                 oferta = buscar_oferta_mercadolivre()
                 plataforma_atual = "SHOPEE"
@@ -165,7 +167,12 @@ def loop_postagem_automatica():
             if oferta:
                 enviar_mensagem_canal(bot, oferta)
             else:
-                print("⚠️ Nenhuma oferta encontrada neste ciclo.")
+                # Se falhar uma, tenta a outra imediatamente
+                oferta = buscar_oferta_mercadolivre()
+                if oferta:
+                    enviar_mensagem_canal(bot, oferta)
+                else:
+                    print("⚠️ Nenhuma oferta obtida neste ciclo. Tentando novamente no próximo.")
                 
         except Exception as e:
             print(f"❌ Erro na postagem automática: {e}")

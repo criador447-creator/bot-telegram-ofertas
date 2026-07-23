@@ -20,7 +20,6 @@ ML_CLIENT_SECRET = os.getenv("ML_CLIENT_SECRET", "geNE24TeMJRCG5AR8vtzPGETBuKCWm
 
 # Credenciais API Shopee
 SHOPEE_APP_ID = os.getenv("SHOPEE_APP_ID", "18176880013")
-SHOPEE_SECRET = os.getenv("SHOPEE_SECRET", "4XA35B6ATAXB2KGN2F6MBY632DNPXFCG")
 
 # Intervalo padrão de postagem: 10 minutos (600 segundos)
 INTERVALO_POSTAGEM = 600 

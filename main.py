@@ -18,7 +18,12 @@ TAG_SHOPEE = os.getenv("TAG_SHOPEE", "18176880013")
 ML_CLIENT_ID = os.getenv("ML_CLIENT_ID", "3774054197554006")
 ML_CLIENT_SECRET = os.getenv("ML_CLIENT_SECRET", "geNE24TeMJRCG5AR8vtzPGETBuKCWm9P")
 
-# Intervalo padrão: 10 minutos (600 segundos)
+# Credenciais API Shopee
+SHOPEE_APP_ID = os.getenv("SHOPEE_APP_ID", "18176880013")
+SHOPEE_SECRET = os.getenv("SHOPEE_SECRET", "4XA35B6ATAXB2KCN2F6MBY632DNPXFCG
+")
+
+# Intervalo padrão de postagem: 10 minutos (600 segundos)
 INTERVALO_POSTAGEM = 600 
 
 # --- SERVIDOR WEB (KEEP ALIVE DO RENDER) ---
@@ -26,7 +31,7 @@ app_web = Flask('')
 
 @app_web.route('/')
 def home():
-    return "Bot de Ofertas ML + Shopee + Detector de Bugs Ativo!"
+    return "Bot de Ofertas Mercado Livre + Shopee em Execução!"
 
 def run_web():
     port = int(os.environ.get('PORT', 8080))
@@ -37,7 +42,7 @@ def keep_alive():
     t.daemon = True
     t.start()
 
-# --- BUSCA MERCADO LIVRE ---
+# --- BUSCA DE OFERTA NO MERCADO LIVRE ---
 def buscar_oferta_mercadolivre():
     try:
         url = "https://api.mercadolibre.com/sites/MLB/search?q=ofertas_relampago&limit=30"
@@ -71,10 +76,9 @@ def buscar_oferta_mercadolivre():
         print(f"Erro ML: {e}")
     return None
 
-# --- BUSCA SHOPEE ---
+# --- BUSCA DE OFERTA NA SHOPEE ---
 def buscar_oferta_shopee():
     try:
-        # Busca produtos em destaque/promoção na Shopee
         url = "https://shopee.com.br/api/v4/search/search_items?keyword=ofertas%20do%20dia&limit=30"
         headers = {"User-Agent": "Mozilla/5.0"}
         response = requests.get(url, headers=headers, timeout=10)
@@ -109,9 +113,9 @@ def buscar_oferta_shopee():
         print(f"Erro Shopee: {e}")
     return None
 
-# --- ENVIO DE MENSAGEM ---
+# --- FORMATAÇÃO E ENVIO DE MENSAGENS ---
 def enviar_mensagem_canal(bot, oferta):
-    # SE FOR BUG / SUPER DESCONTO (>= 40%)
+    # Alerta de Bug / Super Desconto (Desconto >= 40%)
     if oferta['desconto'] >= 40:
         mensagem = (
             "🚨 **ALERTA DE BUG / SUPER DESCONTO!** 🚨\n\n"
@@ -121,7 +125,7 @@ def enviar_mensagem_canal(bot, oferta):
             f"👉 **CORRA ANTES QUE ACABE ({oferta['origem']}):** {oferta['link']}\n\n"
             "⚠️ *Preço extremamente baixo ou possível erro no sistema!*"
         )
-    # OFERTA PADRÃO DE 10 MINUTOS
+    # Postagem padrão a cada 10 minutos
     else:
         preco_texto = f"💰 **Preço:** R$ {oferta['preco_atual']:.2f}"
         if oferta['preco_original'] and oferta['preco_original'] > oferta['preco_atual']:
@@ -143,10 +147,10 @@ def enviar_mensagem_canal(bot, oferta):
     )
     print(f"✅ Oferta enviada ({oferta['origem']}) - Desconto: {oferta['desconto']}%")
 
-# --- LOOP AUTOMÁTICO DE 10 MINUTOS ---
+# --- LOOP PRINCIPAL ---
 def loop_postagem_automatica():
     bot = Bot(token=TOKEN_BOT)
-    print("🚀 Loop de 10 minutos (ML + Shopee + Bugs) iniciado...")
+    print("🚀 Loop de 10 minutos (ML + Shopee + Bugs) rodando...")
     
     plataforma_atual = "ML"
     
@@ -154,7 +158,6 @@ def loop_postagem_automatica():
         try:
             oferta = None
             
-            # Alterna entre Mercado Livre e Shopee
             if plataforma_atual == "ML":
                 oferta = buscar_oferta_mercadolivre()
                 plataforma_atual = "SHOPEE"
@@ -170,7 +173,7 @@ def loop_postagem_automatica():
         except Exception as e:
             print(f"❌ Erro na postagem automática: {e}")
             
-        time.sleep(INTERVALO_POSTAGEM) # Aguarda 10 minutos
+        time.sleep(INTERVALO_POSTAGEM)
 
 if __name__ == '__main__':
     keep_alive()

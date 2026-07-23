@@ -4,7 +4,6 @@ import random
 import requests
 from threading import Thread
 from flask import Flask
-from telegram import Bot
 
 # --- CONFIGURAÇÕES E CREDENCIAIS ---
 TOKEN_BOT = os.getenv("TOKEN_BOT", "8424473006:AAFlnQJyB55mf1RMRwFsHmVZvFED4LLliqQ")
@@ -13,14 +12,14 @@ ID_CANAL = os.getenv("ID_CANAL", "-1003788628286")
 TAG_MERCADO_LIVRE = os.getenv("TAG_ML", "salu8535714")
 TAG_SHOPEE = os.getenv("TAG_SHOPEE", "18176880013")
 
-INTERVALO_POSTAGEM = 600 # 10 minutos
+INTERVALO_POSTAGEM = 600  # 10 minutos (600 segundos)
 
-# --- SERVIDOR WEB (KEEP ALIVE) ---
+# --- SERVIDOR WEB (KEEP ALIVE DO RENDER) ---
 app_web = Flask('')
 
 @app_web.route('/')
 def home():
-    return "Bot de Ofertas Ativo!"
+    return "Bot de Ofertas Ativo no Render!"
 
 def run_web():
     port = int(os.environ.get('PORT', 8080))
@@ -30,6 +29,26 @@ def keep_alive():
     t = Thread(target=run_web)
     t.daemon = True
     t.start()
+
+# --- FUNÇÃO DE ENVIO DIRETO VIA API TELEGRAM ---
+def enviar_telegram(mensagem):
+    try:
+        url = f"https://api.telegram.org/bot{TOKEN_BOT}/sendMessage"
+        payload = {
+            "chat_id": ID_CANAL,
+            "text": mensagem,
+            "parse_mode": "Markdown",
+            "disable_web_page_preview": False
+        }
+        resp = requests.post(url, json=payload, timeout=10)
+        if resp.status_code == 200:
+            print("✅ Mensagem enviada com sucesso ao Telegram!")
+            return True
+        else:
+            print(f"❌ Erro ao enviar mensagem ao Telegram: {resp.status_code} - {resp.text}")
+    except Exception as e:
+        print(f"❌ Exceção no envio Telegram: {e}")
+    return False
 
 # --- BUSCA MERCADO LIVRE ---
 def buscar_oferta_mercadolivre():
@@ -62,8 +81,6 @@ def buscar_oferta_mercadolivre():
                     "desconto": desconto,
                     "link": link_afiliado
                 }
-        else:
-            print(f"⚠️ Mercado Livre respondeu com status: {response.status_code}")
     except Exception as e:
         print(f"❌ Erro ML: {e}")
     return None
@@ -71,7 +88,6 @@ def buscar_oferta_mercadolivre():
 # --- BUSCA SHOPEE ---
 def buscar_oferta_shopee():
     try:
-        # Busca alternativa para contornar bloqueios simples
         url = "https://shopee.com.br/api/v4/recommend/recommend_items?bundle=daily_discover_main&limit=30"
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
@@ -105,52 +121,40 @@ def buscar_oferta_shopee():
                     "desconto": desconto,
                     "link": link_afiliado
                 }
-        else:
-            print(f"⚠️ Shopee bloqueou a requisição (Status {response.status_code})")
     except Exception as e:
         print(f"❌ Erro Shopee: {e}")
     return None
 
-# --- ENVIO DE MENSAGEM ---
-def enviar_mensagem_canal(bot, oferta):
+# --- FORMATAR E ENVIAR MENSAGEM ---
+def processar_e_enviar(oferta):
     if oferta['desconto'] >= 40:
         mensagem = (
-            "🚨 **ALERTA DE BUG / SUPER DESCONTO!** 🚨\n\n"
-            f"📦 **{oferta['titulo']}**\n"
-            f"❌ De: ~~R$ {oferta['preco_original']:.2f}~~\n"
-            f"🔥 **Por apenas: R$ {oferta['preco_atual']:.2f}** ({oferta['desconto']}% OFF!)\n\n"
-            f"👉 **CORRA ANTES QUE ACABE ({oferta['origem']}):** {oferta['link']}"
+            "🚨 *ALERTA DE BUG / SUPER DESCONTO!* 🚨\n\n"
+            f"📦 *{oferta['titulo']}*\n"
+            f"❌ De: ~R$ {oferta['preco_original']:.2f}~\n"
+            f"🔥 *Por apenas: R$ {oferta['preco_atual']:.2f}* ({oferta['desconto']}% OFF!)\n\n"
+            f"👉 *CORRA ANTES QUE ACABE ({oferta['origem']}):*\n{oferta['link']}"
         )
     else:
-        preco_texto = f"💰 **Preço:** R$ {oferta['preco_atual']:.2f}"
+        preco_texto = f"💰 *Preço:* R$ {oferta['preco_atual']:.2f}"
         if oferta['preco_original'] and oferta['preco_original'] > oferta['preco_atual']:
-            preco_texto = f"❌ De: ~~R$ {oferta['preco_original']:.2f}~~\n💰 **Por:** R$ {oferta['preco_atual']:.2f}"
+            preco_texto = f"❌ De: ~R$ {oferta['preco_original']:.2f}~\n💰 *Por:* R$ {oferta['preco_atual']:.2f}"
         
         mensagem = (
-            f"🔥 **OFERTA IMPERDÍVEL ({oferta['origem'].upper()})!** 🔥\n\n"
-            f"📦 **{oferta['titulo']}**\n"
+            f"🔥 *OFERTA IMPERDÍVEL ({oferta['origem'].upper()})!* 🔥\n\n"
+            f"📦 *{oferta['titulo']}*\n"
             f"{preco_texto}\n\n"
-            f"👉 **Garantir na {oferta['origem']}:** {oferta['link']}"
+            f"👉 *Garantir na {oferta['origem']}:*\n{oferta['link']}"
         )
         
-    bot.send_message(
-        chat_id=ID_CANAL,
-        text=mensagem,
-        parse_mode="Markdown",
-        disable_web_page_preview=False
-    )
-    print(f"✅ Oferta enviada ({oferta['origem']}) - Desconto: {oferta['desconto']}%")
+    enviar_telegram(mensagem)
 
-# --- LOOP AUTOMÁTICO ---
+# --- LOOP AUTOMÁTICO DE 10 MINUTOS ---
 def loop_postagem_automatica():
-    bot = Bot(token=TOKEN_BOT)
+    print("🚀 Iniciando bot e enviando mensagem de teste...")
     
-    # 🧪 TESTE INICIAL: Envia mensagem imediatamente ao ligar
-    try:
-        bot.send_message(chat_id=ID_CANAL, text="🤖 **Bot de Ofertas iniciado com sucesso!** Acompanhe as postagens automaticamente.")
-        print("✅ Mensagem de teste inicial enviada para o canal!")
-    except Exception as e:
-        print(f"❌ Erro no teste inicial (Verifique se o bot é Admin do canal): {e}")
+    # Teste imediato ao ligar
+    enviar_telegram("🤖 *Bot de Ofertas conectado com sucesso!* As ofertas serão enviadas aqui a cada 10 minutos.")
 
     plataforma_atual = "ML"
     
@@ -165,17 +169,17 @@ def loop_postagem_automatica():
                 plataforma_atual = "ML"
                 
             if oferta:
-                enviar_mensagem_canal(bot, oferta)
+                processar_e_enviar(oferta)
             else:
-                # Se falhar uma, tenta a outra imediatamente
+                # Tenta a outra se a primeira falhar
                 oferta = buscar_oferta_mercadolivre()
                 if oferta:
-                    enviar_mensagem_canal(bot, oferta)
+                    processar_e_enviar(oferta)
                 else:
-                    print("⚠️ Nenhuma oferta obtida neste ciclo. Tentando novamente no próximo.")
+                    print("⚠️ Nenhuma oferta obtida neste ciclo.")
                 
         except Exception as e:
-            print(f"❌ Erro na postagem automática: {e}")
+            print(f"❌ Erro no loop de postagens: {e}")
             
         time.sleep(INTERVALO_POSTAGEM)
 

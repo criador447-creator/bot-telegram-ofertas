@@ -112,6 +112,62 @@ def enviar_telegram_com_botao(foto_url, mensagem, texto_botao, url_botao, compar
 
     return False
 
+# --- BUSCA ERROS DE PREÇO E BUGS DO SITE ---
+def buscar_bug_preco(termo_busca=None):
+    """
+    Procura por produtos com super descontos / bugs de preço (ex: celular de R$ 1000 por R$ 600).
+    """
+    if not termo_busca:
+        termo_busca = random.choice(["smartphone", "celular", "notebook", "smart tv", "iphone", "tablet", "air fryer", "geladeira"])
+    
+    try:
+        url = f"https://api.mercadolibre.com/sites/MLB/search?q={termo_busca}&limit=50"
+        headers = {"User-Agent": "Mozilla/5.0"}
+        resp = requests.get(url, headers=headers, timeout=10)
+        if resp.status_code == 200:
+            dados = resp.json()
+            resultados = dados.get("results", [])
+            
+            bugs = []
+            for p in resultados:
+                p_atual = float(p.get("price", 0) or 0)
+                p_orig = p.get("original_price")
+                if p_orig and p_atual > 0:
+                    p_orig = float(p_orig)
+                    desconto = ((p_orig - p_atual) / p_orig) * 100
+                    # Filtra super ofertas/bugs (ex: desconto >= 35% em produtos de valor relevante)
+                    if desconto >= 35 and p_orig >= 300:
+                        bugs.append((p, desconto))
+            
+            if bugs:
+                produto, desconto_val = random.choice(bugs)
+                titulo = produto.get("title")
+                preco_atual = float(produto.get("price"))
+                preco_original = float(produto.get("original_price"))
+                link_original = produto.get("permalink")
+                
+                thumbnail = produto.get("thumbnail", "")
+                foto = thumbnail.replace("-I.jpg", "-O.jpg").replace("-I.webp", "-O.jpg")
+                if not foto.startswith("http"):
+                    foto = f"https:{foto}"
+                    
+                link_afiliado = f"{link_original}?matt_tool={TAG_MERCADO_LIVRE}" if "?" not in link_original else f"{link_original}&matt_tool={TAG_MERCADO_LIVRE}"
+                
+                return {
+                    "origem": "Mercado Livre [BUG DE PREÇO]",
+                    "titulo": f"🚨 BUG DE PREÇO: {titulo}",
+                    "preco_atual": preco_atual,
+                    "preco_original": preco_original,
+                    "desconto": int(desconto_val),
+                    "frete_gratis": produto.get("shipping", {}).get("free_shipping", False),
+                    "parcelamento": "💳 *Aproveite antes que o site corrija!*",
+                    "link": link_afiliado,
+                    "foto": foto
+                }
+    except Exception as e:
+        logging.error(f"Erro na busca de bugs de preço: {e}")
+    return None
+
 # --- BUSCA MERCADO LIVRE 100% REAL (COM IMAGEM HD E AFILIADO) ---
 def buscar_oferta_mercadolivre(termo_busca=None):
     try:
@@ -265,15 +321,30 @@ def buscar_oferta_amazon(termo_busca=None):
                 pattern_title = rf'data-asin="{asin}".*?<span class="a-size-[^"]*?a-text-normal">(.*?)</span>'
                 title_match = re.search(pattern_title, res.text, re.DOTALL)
                 
-                # Extrai preço real
-                pattern_price = rf'data-asin="{asin}".*?<span class="a-price-whole">([\d.,]+)</span>'
+                # Extrai preço real (primeiro tenta a-offscreen completo, senão a-price-whole)
+                pattern_price = rf'data-asin="{asin}".*?<span class="a-offscreen">(?:R\$\s*)?([\d.,]+)</span>'
                 price_match = re.search(pattern_price, res.text, re.DOTALL)
+                if not price_match:
+                    pattern_price = rf'data-asin="{asin}".*?<span class="a-price-whole">([\d.,]+)</span>'
+                    price_match = re.search(pattern_price, res.text, re.DOTALL)
                 
                 if img_match and title_match and price_match:
                     foto = img_match.group(1)
                     titulo = title_match.group(1).strip()
-                    preco_str = price_match.group(1).replace(".", "").replace(",", ".")
-                    preco_atual = float(preco_str)
+                    preco_raw = price_match.group(1).strip()
+                    
+                    # Converte preço no formato pt-BR (ex: "1.299,00" -> 1299.00)
+                    if "," in preco_raw and "." in preco_raw:
+                        preco_str = preco_raw.replace(".", "").replace(",", ".")
+                    elif "," in preco_raw:
+                        preco_str = preco_raw.replace(",", ".")
+                    else:
+                        preco_str = preco_raw
+                        
+                    try:
+                        preco_atual = float(preco_str)
+                    except ValueError:
+                        continue
                     
                     if preco_atual > 0 and foto:
                         link_direto = f"https://www.amazon.com.br/dp/{asin}"
@@ -355,23 +426,25 @@ def processar_e_enviar(oferta):
     desconto = oferta.get('desconto', 0)
     preco_orig = oferta.get('preco_original')
 
-    if desconto >= 40:
+    preco_orig_texto = f"❌ De: ~R$ {preco_orig:.2f}~\n" if (preco_orig and preco_orig > oferta['preco_atual']) else ""
+
+    if "BUG DE PREÇO" in oferta['origem'] or desconto >= 35:
         mensagem = (
-            "🚨 *SUPER DESCONTO DETECTADO!* 🚨\n\n"
+            "🚨 *BUG DE PREÇO DETECTADO!* 🚨\n\n"
             f"{copy_texto}"
             f"📦 *{oferta['titulo']}*\n"
-            f"❌ De: ~R$ {preco_orig:.2f}~\n" if preco_orig else ""
+            f"{preco_orig_texto}"
             f"🔥 *Por apenas: R$ {oferta['preco_atual']:.2f}* ({desconto}% OFF!)\n"
             f"{parcelas_texto}"
             f"{frete_texto}"
             f"{comparacao_texto}"
-            "⚡️ *Aproveite antes que esgotar!*"
+            "⚡️ *CORRA! Preço muito abaixo do normal!*"
         )
-        texto_botao = f"🔥 COMPRAR NA {oferta['origem'].upper()} ({desconto}% OFF)"
+        texto_botao = f"🔥 PEGAR BUG NA {oferta['origem'].upper()} ({desconto}% OFF)"
     else:
         preco_texto = f"💰 *Preço:* R$ {oferta['preco_atual']:.2f}"
-        if preco_orig and preco_orig > oferta['preco_atual']:
-            preco_texto = f"❌ De: ~R$ {preco_orig:.2f}~\n💰 *Por:* R$ {oferta['preco_atual']:.2f}"
+        if preco_orig_texto:
+            preco_texto = f"{preco_orig_texto}💰 *Por:* R$ {oferta['preco_atual']:.2f}"
         
         mensagem = (
             f"🔥 *OFERTA IMPERDÍVEL ({oferta['origem'].upper()})!* 🔥\n\n"
@@ -413,10 +486,21 @@ def escutar_comandos_telegram():
                             "👋 *Bem-vindo ao Bot do Radar de Ofertas Reais!*\n\n"
                             "• Use `/desejo produto, preco` para ser avisado quando o produto aparecer em promoção.\n"
                             "Exemplo: `/desejo air fryer, 200`\n\n"
+                            "• Use `/bug` para buscar imediatamente um erro de preço/bug nos sites.\n\n"
                             "• Use `/intervalo <minutos>` para alterar o tempo entre envios automáticos.\n"
                             "Exemplo: `/intervalo 1` (para enviar a cada 1 minuto)"
                         )
                         requests.post(f"https://api.telegram.org/bot{TOKEN_BOT}/sendMessage", json={"chat_id": user_id, "text": boas_vindas, "parse_mode": "Markdown"})
+
+                    elif text.startswith("/bug") or text.startswith("/bugs"):
+                        requests.post(f"https://api.telegram.org/bot{TOKEN_BOT}/sendMessage", json={"chat_id": user_id, "text": "🔎 *Procurando bugs de preço no site...*", "parse_mode": "Markdown"})
+                        oferta_bug = buscar_bug_preco()
+                        if oferta_bug:
+                            processar_e_enviar(oferta_bug)
+                            resp_text = "🚨 *Bug de preço encontrado e enviado para o canal!*"
+                        else:
+                            resp_text = "⚠️ Nenhum bug crítico encontrado neste instante. O bot continuará buscando nas varreduras automáticas!"
+                        requests.post(f"https://api.telegram.org/bot{TOKEN_BOT}/sendMessage", json={"chat_id": user_id, "text": resp_text, "parse_mode": "Markdown"})
 
                     elif text.startswith("/intervalo") or text.startswith("/tempo"):
                         try:
@@ -454,6 +538,7 @@ def loop_postagem_automatica():
     logging.info(f"🚀 Bot iniciado buscando ofertas 100% REAIS com IMAGENS a cada {INTERVALO_POSTAGEM} segundos!")
 
     buscadores = [
+        buscar_bug_preco,
         buscar_oferta_mercadolivre,
         buscar_oferta_shopee,
         buscar_oferta_amazon

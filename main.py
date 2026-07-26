@@ -5,6 +5,7 @@ import logging
 import requests
 import json
 import re
+import threading
 import google.generativeai as genai
 from threading import Thread
 from flask import Flask
@@ -45,12 +46,18 @@ CATEGORIAS_BUSCA = [
 # --- BANCO DE DADOS EM MEMÓRIA PARA O RADAR DE DESEJOS ---
 RADAR_DESEJOS = []
 
-# --- SERVIDOR WEB (KEEP ALIVE DO RENDER) ---
-app_web = Flask('')
+# --- SERVIDOR WEB (KEEP ALIVE DO RENDER / ENDPOINT CRON) ---
+app_web = Flask(__name__)
 
 @app_web.route('/')
 def home():
     return "Bot de Ofertas Multilojas Ativo!"
+
+@app_web.route('/postar-oferta')
+def disparar_oferta():
+    # Coloque aqui a sua função que busca e envia a oferta para o Telegram
+    enviar_oferta_telegram()
+    return "Oferta enviada com sucesso!", 200
 
 def run_web():
     port = int(os.environ.get('PORT', 8080))
@@ -465,6 +472,29 @@ def processar_e_enviar(oferta):
         url_botao=oferta['link']
     )
 
+# --- FUNÇÃO PRINCIPAL DE DISPARO DE OFERTA ---
+def enviar_oferta_telegram():
+    buscadores = [
+        buscar_bug_preco,
+        buscar_oferta_mercadolivre,
+        buscar_oferta_shopee,
+        buscar_oferta_amazon
+    ]
+    random.shuffle(buscadores)
+    for buscador in buscadores:
+        try:
+            oferta = buscador()
+            if oferta and oferta.get("foto"):
+                if processar_e_enviar(oferta):
+                    return True
+        except Exception as e:
+            logging.error(f"Erro ao buscar oferta no disparo: {e}")
+            
+    oferta_backup = buscar_oferta_mercadolivre() or buscar_oferta_shopee()
+    if oferta_backup and oferta_backup.get("foto"):
+        return processar_e_enviar(oferta_backup)
+    return False
+
 # --- ESCUTAR COMANDOS PRIVADOS PARA O RADAR DE DESEJOS E CONFIGURAÇÃO ---
 def escutar_comandos_telegram():
     global INTERVALO_POSTAGEM
@@ -533,41 +563,18 @@ def escutar_comandos_telegram():
             logging.error(f"Erro na escuta de comandos: {e}")
         time.sleep(3)
 
-# --- LOOP AUTOMÁTICO DE POSTAGENS REAL DE ALTA QUALIDADE ---
-def loop_postagem_automatica():
-    logging.info(f"🚀 Bot iniciado buscando ofertas 100% REAIS com IMAGENS a cada {INTERVALO_POSTAGEM} segundos!")
-
-    buscadores = [
-        buscar_bug_preco,
-        buscar_oferta_mercadolivre,
-        buscar_oferta_shopee,
-        buscar_oferta_amazon
-    ]
-    
-    indice_atual = 0
-
+# --- LOOP AUTOMÁTICO DE POSTAGENS EM SEGUNDO PLANO ---
+def rodar_loop_ofertas():
+    logging.info(f"🚀 Loop paralelo de ofertas iniciado a cada {INTERVALO_POSTAGEM} segundos!")
     while True:
         try:
-            buscador_func = buscadores[indice_atual]
-            oferta = buscador_func()
-            
-            # Rotaciona para a próxima fonte no próximo ciclo
-            indice_atual = (indice_atual + 1) % len(buscadores)
-                
-            enviado = False
-            if oferta and oferta.get("foto"):
-                enviado = processar_e_enviar(oferta)
-                
-            if not enviado:
-                logging.warning("⚠️ Tentando buscar oferta garantida no Mercado Livre / Shopee...")
-                oferta_backup = buscar_oferta_mercadolivre() or buscar_oferta_shopee()
-                if oferta_backup and oferta_backup.get("foto"):
-                    processar_e_enviar(oferta_backup)
-                
+            enviar_oferta_telegram()
         except Exception as e:
-            logging.error(f"❌ Erro no loop de postagens: {e}")
-            
+            logging.error(f"Erro ao enviar oferta: {e}")
         time.sleep(INTERVALO_POSTAGEM)
+
+# Inicia a thread de ofertas em segundo plano antes do Flask rodar
+threading.Thread(target=rodar_loop_ofertas, daemon=True).start()
 
 if __name__ == '__main__':
     keep_alive()
@@ -576,11 +583,6 @@ if __name__ == '__main__':
     t_cmd = Thread(target=escutar_comandos_telegram)
     t_cmd.daemon = True
     t_cmd.start()
-
-    # Thread das Postagens
-    t_post = Thread(target=loop_postagem_automatica)
-    t_post.daemon = True
-    t_post.start()
     
     while True:
         time.sleep(60)

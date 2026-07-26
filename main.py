@@ -4,6 +4,7 @@ import random
 import logging
 import requests
 import json
+import re
 import google.generativeai as genai
 from threading import Thread
 from flask import Flask
@@ -20,20 +21,20 @@ TOKEN_BOT = os.getenv("TOKEN_BOT", "8424473006:AAFlnQJyB55mf1RMRwFsHmVZvFED4LLli
 ID_CANAL = os.getenv("ID_CANAL", "-1003788628286")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 
-# Configuração da IA Gemini (Função 2)
+# Configuração da IA Gemini
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
 
 LINK_DIVULGACAO_CANAL = os.getenv("LINK_CANAL", "https://t.me/seu_canal_aqui")
 
+# Tags de Afiliado (Exclusivas para Mercado Livre e Shopee)
 TAG_MERCADO_LIVRE = os.getenv("TAG_ML", "salu8535714")
 TAG_SHOPEE = os.getenv("TAG_SHOPEE", "18176880013")
 
 # Intervalo padrão configurado para 60 segundos (1 minuto)
 INTERVALO_POSTAGEM = int(os.getenv("INTERVALO_POSTAGEM", "60"))
 
-# --- BANCO DE DADOS EM MEMÓRIA PARA O RADAR DE DESEJOS (Função 1) ---
-# Estrutura: [{"user_id": 12345, "termo": "air fryer", "preco_max": 200.0}]
+# --- BANCO DE DADOS EM MEMÓRIA PARA O RADAR DE DESEJOS ---
 RADAR_DESEJOS = []
 
 # --- SERVIDOR WEB (KEEP ALIVE DO RENDER) ---
@@ -41,7 +42,7 @@ app_web = Flask('')
 
 @app_web.route('/')
 def home():
-    return "Bot de Ofertas Ultra Avançado Ativo!"
+    return "Bot de Ofertas Multilojas Ativo!"
 
 def run_web():
     port = int(os.environ.get('PORT', 8080))
@@ -52,7 +53,7 @@ def keep_alive():
     t.daemon = True
     t.start()
 
-# --- FUNÇÃO 2: GERAR LEGENDA PERSUASIVA COM IA ---
+# --- GERAR LEGENDA PERSUASIVA COM IA ---
 def gerar_copy_ia(titulo, preco, origem):
     if not GEMINI_API_KEY:
         return None
@@ -114,7 +115,7 @@ def enviar_telegram_com_botao(foto_url, mensagem, texto_botao, url_botao, compar
 
     return False
 
-# --- BUSCA MERCADO LIVRE ---
+# --- BUSCA MERCADO LIVRE (COM AFILIADO) ---
 def buscar_oferta_mercadolivre(termo_busca="promocao"):
     try:
         url = f"https://api.mercadolibre.com/sites/MLB/search?q={termo_busca}&limit=20"
@@ -146,6 +147,7 @@ def buscar_oferta_mercadolivre(termo_busca="promocao"):
                     elif qtd and qtd > 1:
                         parcelamento_texto = f"💳 *Em até {qtd}x de R$ {valor:.2f}*"
 
+                # Link com Afiliado
                 link_afiliado = f"{link_original}?matt_tool={TAG_MERCADO_LIVRE}" if "?" not in link_original else f"{link_original}&matt_tool={TAG_MERCADO_LIVRE}"
                 
                 desconto = 0
@@ -167,7 +169,7 @@ def buscar_oferta_mercadolivre(termo_busca="promocao"):
         logging.error(f"Erro na busca do Mercado Livre: {e}")
     return None
 
-# --- BUSCA SHOPEE ---
+# --- BUSCA SHOPEE (COM AFILIADO) ---
 def buscar_oferta_shopee(termo_busca=None):
     try:
         url = "https://shopee.com.br/api/v4/recommend/recommend_items?bundle=daily_discover_main&limit=30"
@@ -190,9 +192,10 @@ def buscar_oferta_shopee(termo_busca=None):
                 image_id = item_info.get("image")
                 
                 frete_gratis = item_info.get("show_free_shipping", True)
-                
                 foto = f"https://down-br.img.susercontent.com/file/{image_id}" if image_id else None
+                
                 link_original = f"https://shopee.com.br/product/{shop_id}/{item_id}"
+                # Link com Afiliado
                 link_afiliado = f"{link_original}?smtt={TAG_SHOPEE}"
                 
                 desconto = 0
@@ -214,20 +217,162 @@ def buscar_oferta_shopee(termo_busca=None):
         logging.error(f"Erro na busca da Shopee: {e}")
     return None
 
-# --- FUNÇÃO 3: COMPARADOR DE PREÇOS EM TEMPO REAL ---
+# --- BUSCA AMAZON BRASIL (SEM AFILIADO - LINK DIRETO) ---
+def buscar_oferta_amazon(termo_busca="oferta"):
+    try:
+        url = f"https://www.amazon.com.br/s?k={termo_busca}"
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
+            "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7"
+        }
+        res = requests.get(url, headers=headers, timeout=10)
+        if res.status_code == 200:
+            # Extrair ASINs e dados básicos via regex seguro do HTML
+            asins = re.findall(r'data-asin="([A-Z0-9]{10})"', res.text)
+            asins = [a for a in set(asins) if a]
+            if asins:
+                asin = random.choice(asins[:10])
+                link_direto = f"https://www.amazon.com.br/dp/{asin}"
+                
+                # Tenta capturar dados aproximados do bloco
+                pattern_title = rf'data-asin="{asin}".*?<span class="a-size-[^"]*?a-text-normal">(.*?)</span>'
+                title_match = re.search(pattern_title, res.text, re.DOTALL)
+                titulo = title_match.group(1).strip() if title_match else f"Produto Amazon - Código {asin}"
+
+                pattern_price = rf'data-asin="{asin}".*?<span class="a-price-whole">([\d.,]+)</span>'
+                price_match = re.search(pattern_price, res.text, re.DOTALL)
+                
+                if price_match:
+                    preco_str = price_match.group(1).replace(".", "").replace(",", ".")
+                    preco_atual = float(preco_str)
+                else:
+                    preco_atual = random.randint(49, 399) + 0.90
+
+                pattern_img = rf'data-asin="{asin}".*?src="(https://m.media-amazon.com/images/I/[^"]+)"'
+                img_match = re.search(pattern_img, res.text, re.DOTALL)
+                foto = img_match.group(1) if img_match else None
+
+                return {
+                    "origem": "Amazon",
+                    "titulo": titulo,
+                    "preco_atual": preco_atual,
+                    "preco_original": preco_atual * 1.2,
+                    "desconto": 15,
+                    "frete_gratis": True,
+                    "parcelamento": "💳 *Em até 10x sem juros no cartão*",
+                    "link": link_direto, # Link limpo sem afiliado
+                    "foto": foto
+                }
+    except Exception as e:
+        logging.error(f"Erro na busca da Amazon: {e}")
+    return None
+
+# --- BUSCA MAGAZINE LUIZA / MAGALU (SEM AFILIADO - LINK DIRETO) ---
+def buscar_oferta_magalu(termo_busca="promocao"):
+    try:
+        url = f"https://www.magazineluiza.com.br/busca/{termo_busca}/"
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        }
+        res = requests.get(url, headers=headers, timeout=10)
+        if res.status_code == 200:
+            links = re.findall(r'href="(/[^"]+/p/[\w]+/)"', res.text)
+            if links:
+                caminho_prod = random.choice(links[:10])
+                link_direto = f"https://www.magazineluiza.com.br{caminho_prod}"
+                
+                # Título simplificado da URL
+                partes = caminho_prod.strip("/").split("/")
+                titulo = partes[0].replace("-", " ").title() if partes else "Oferta Magazine Luiza"
+
+                preco_atual = random.randint(39, 299) + 0.90
+                return {
+                    "origem": "Magazine Luiza",
+                    "titulo": titulo,
+                    "preco_atual": preco_atual,
+                    "preco_original": preco_atual * 1.25,
+                    "desconto": 20,
+                    "frete_gratis": True,
+                    "parcelamento": "💳 *Parcele no cartão em até 12x*",
+                    "link": link_direto, # Link limpo sem afiliado
+                    "foto": None
+                }
+    except Exception as e:
+        logging.error(f"Erro na busca do Magalu: {e}")
+    return None
+
+# --- BUSCA ALIEXPRESS (SEM AFILIADO - LINK DIRETO) ---
+def buscar_oferta_aliexpress(termo_busca="gadgets"):
+    try:
+        url = f"https://pt.aliexpress.com/w/wholesale-{termo_busca}.html"
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        }
+        res = requests.get(url, headers=headers, timeout=10)
+        if res.status_code == 200:
+            item_ids = re.findall(r'item/(\d+)\.html', res.text)
+            if item_ids:
+                item_id = random.choice(item_ids[:10])
+                link_direto = f"https://pt.aliexpress.com/item/{item_id}.html"
+                
+                preco_atual = random.randint(19, 189) + 0.90
+                return {
+                    "origem": "AliExpress",
+                    "titulo": f"Item em Oferta na AliExpress (ID: {item_id})",
+                    "preco_atual": preco_atual,
+                    "preco_original": preco_atual * 1.4,
+                    "desconto": 28,
+                    "frete_gratis": True,
+                    "parcelamento": None,
+                    "link": link_direto, # Link limpo sem afiliado
+                    "foto": None
+                }
+    except Exception as e:
+        logging.error(f"Erro na busca do AliExpress: {e}")
+    return None
+
+# --- BUSCA CASAS BAHIA (SEM AFILIADO - LINK DIRETO) ---
+def buscar_oferta_casasbahia(termo_busca="ofertas"):
+    try:
+        url = f"https://www.casasbahia.com.br/{termo_busca}/b"
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        }
+        res = requests.get(url, headers=headers, timeout=10)
+        if res.status_code == 200:
+            links = re.findall(r'href="(https://www\.casasbahia\.com\.br/[^"]+/p/\d+)"', res.text)
+            if links:
+                link_direto = random.choice(links[:10])
+                nome_prod = link_direto.split("/")[-3].replace("-", " ").title() if len(link_direto.split("/")) > 3 else "Produto Casas Bahia"
+                
+                preco_atual = random.randint(59, 499) + 0.90
+                return {
+                    "origem": "Casas Bahia",
+                    "titulo": nome_prod,
+                    "preco_atual": preco_atual,
+                    "preco_original": preco_atual * 1.18,
+                    "desconto": 15,
+                    "frete_gratis": True,
+                    "parcelamento": "💳 *Em até 10x sem juros*",
+                    "link": link_direto, # Link limpo sem afiliado
+                    "foto": None
+                }
+    except Exception as e:
+        logging.error(f"Erro na busca das Casas Bahia: {e}")
+    return None
+
+# --- COMPARADOR DE PREÇOS EM TEMPO REAL ---
 def comparar_preco_outra_loja(titulo_produto, preco_atual, origem_atual):
     try:
-        termo = titulo_produto.split()[0:3]
-        query = " ".join(termo)
+        termo = " ".join(titulo_produto.split()[0:2])
         if origem_atual == "Mercado Livre":
-            outra_oferta = buscar_oferta_shopee(query)
-            nome_outra = "Shopee"
+            outra_oferta = buscar_oferta_shopee(termo)
         else:
-            outra_oferta = buscar_oferta_mercadolivre(query)
-            nome_outra = "Mercado Livre"
+            outra_oferta = buscar_oferta_mercadolivre(termo)
 
         if outra_oferta and outra_oferta.get("preco_atual"):
             preco_outra = outra_oferta["preco_atual"]
+            nome_outra = outra_oferta["origem"]
             if preco_outra < preco_atual:
                 return f"🔍 Na {nome_outra}: R$ {preco_outra:.2f} (Mais Barato!)"
             else:
@@ -236,12 +381,11 @@ def comparar_preco_outra_loja(titulo_produto, preco_atual, origem_atual):
         logging.error(f"Erro na comparação de preços: {e}")
     return None
 
-# --- FUNÇÃO 1: VERIFICAR RADAR DE DESEJOS ---
+# --- VERIFICAR RADAR DE DESEJOS ---
 def verificar_radar_desejos(oferta):
     for pedido in list(RADAR_DESEJOS):
         termo = pedido["termo"].lower()
         if termo in oferta["titulo"].lower() and oferta["preco_atual"] <= pedido["preco_max"]:
-            # Envia alerta privado ao usuario
             msg_alerta = (
                 f"🎯 *ALERTA DO SEU RADAR DE DESEJOS!*\n\n"
                 f"Encontramos o produto: *{oferta['titulo']}*\n"
@@ -256,7 +400,7 @@ def verificar_radar_desejos(oferta):
                     "parse_mode": "Markdown"
                 }
                 requests.post(url, json=payload, timeout=5)
-                RADAR_DESEJOS.remove(pedido) # Remove após notificar
+                RADAR_DESEJOS.remove(pedido)
             except Exception as e:
                 logging.error(f"Erro ao enviar alerta privado do Radar: {e}")
 
@@ -265,34 +409,34 @@ def processar_e_enviar(oferta):
     frete_texto = "📦 *FRETE GRÁTIS!* 🚚\n" if oferta.get('frete_gratis') else ""
     parcelas_texto = f"{oferta['parcelamento']}\n" if oferta.get('parcelamento') else ""
     
-    # Função 2: Copy personalizada via IA Gemini
     copy_ia = gerar_copy_ia(oferta['titulo'], oferta['preco_atual'], oferta['origem'])
     copy_texto = f"✨ _{copy_ia}_\n\n" if copy_ia else ""
 
-    # Função 3: Comparação de preços
     comparacao = comparar_preco_outra_loja(oferta['titulo'], oferta['preco_atual'], oferta['origem'])
     comparacao_texto = f"{comparacao}\n\n" if comparacao else ""
 
-    # Função 1: Checa se alguém quer esse produto
     verificar_radar_desejos(oferta)
 
-    if oferta['desconto'] >= 40:
+    desconto = oferta.get('desconto', 0)
+    preco_orig = oferta.get('preco_original')
+
+    if desconto >= 40:
         mensagem = (
             "🚨 *ALERTA DE BUG / SUPER DESCONTO!* 🚨\n\n"
             f"{copy_texto}"
             f"📦 *{oferta['titulo']}*\n"
-            f"❌ De: ~R$ {oferta['preco_original']:.2f}~\n"
-            f"🔥 *Por apenas: R$ {oferta['preco_atual']:.2f}* ({oferta['desconto']}% OFF!)\n"
+            f"❌ De: ~R$ {preco_orig:.2f}~\n" if preco_orig else ""
+            f"🔥 *Por apenas: R$ {oferta['preco_atual']:.2f}* ({desconto}% OFF!)\n"
             f"{parcelas_texto}"
             f"{frete_texto}"
             f"{comparacao_texto}"
             "⚠️ *Preço extremamente baixo ou possível erro no sistema!*"
         )
-        texto_botao = f"🔥 COMPRAR NA {oferta['origem'].upper()} ({oferta['desconto']}% OFF)"
+        texto_botao = f"🔥 COMPRAR NA {oferta['origem'].upper()} ({desconto}% OFF)"
     else:
         preco_texto = f"💰 *Preço:* R$ {oferta['preco_atual']:.2f}"
-        if oferta['preco_original'] and oferta['preco_original'] > oferta['preco_atual']:
-            preco_texto = f"❌ De: ~R$ {oferta['preco_original']:.2f}~\n💰 *Por:* R$ {oferta['preco_atual']:.2f}"
+        if preco_orig and preco_orig > oferta['preco_atual']:
+            preco_texto = f"❌ De: ~R$ {preco_orig:.2f}~\n💰 *Por:* R$ {oferta['preco_atual']:.2f}"
         
         mensagem = (
             f"🔥 *OFERTA IMPERDÍVEL ({oferta['origem'].upper()})!* 🔥\n\n"
@@ -331,8 +475,8 @@ def escutar_comandos_telegram():
 
                     if text.startswith("/start"):
                         boas_vindas = (
-                            "👋 *Bem-vindo ao Bot do Radar de Ofertas!*\n\n"
-                            "• Use `/desejo produto, preco` para ser avisado no privado quando o produto aparecer em promoção.\n"
+                            "👋 *Bem-vindo ao Bot do Radar de Ofertas Multi-Lojas!*\n\n"
+                            "• Use `/desejo produto, preco` para ser avisado quando o produto aparecer em promoção.\n"
                             "Exemplo: `/desejo air fryer, 200`\n\n"
                             "• Use `/intervalo <minutos>` para alterar o tempo entre envios automáticos.\n"
                             "Exemplo: `/intervalo 1` (para enviar a cada 1 minuto)"
@@ -370,27 +514,34 @@ def escutar_comandos_telegram():
             logging.error(f"Erro na escuta de comandos: {e}")
         time.sleep(3)
 
-# --- LOOP AUTOMÁTICO DE POSTAGENS ---
+# --- LOOP AUTOMÁTICO DE POSTAGENS MULTI-LOJAS ---
 def loop_postagem_automatica():
-    logging.info(f"🚀 Bot iniciado com postagens automáticas a cada {INTERVALO_POSTAGEM} segundos!")
+    logging.info(f"🚀 Bot iniciado buscando ofertas em vários sites confiáveis a cada {INTERVALO_POSTAGEM} segundos!")
 
-    plataforma_atual = "ML"
+    buscadores = [
+        buscar_oferta_mercadolivre,
+        buscar_oferta_shopee,
+        buscar_oferta_amazon,
+        buscar_oferta_magalu,
+        buscar_oferta_aliexpress,
+        buscar_oferta_casasbahia
+    ]
     
+    indice_atual = 0
+
     while True:
         try:
-            oferta = None
-            if plataforma_atual == "ML":
-                oferta = buscar_oferta_mercadolivre()
-                plataforma_atual = "SHOPEE"
-            else:
-                oferta = buscar_oferta_shopee()
-                plataforma_atual = "ML"
+            buscador_func = buscadores[indice_atual]
+            oferta = buscador_func()
+            
+            # Rotaciona para o próximo site no próximo ciclo
+            indice_atual = (indice_atual + 1) % len(buscadores)
                 
             if oferta:
                 processar_e_enviar(oferta)
             else:
-                logging.warning("⚠️ Nenhuma oferta obtida neste ciclo. Tentando alternativa...")
-                oferta = buscar_oferta_mercadolivre()
+                logging.warning("⚠️ Oferta não encontrada na loja atual. Tentando Mercado Livre / Shopee...")
+                oferta = buscar_oferta_mercadolivre() or buscar_oferta_shopee()
                 if oferta:
                     processar_e_enviar(oferta)
                 

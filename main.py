@@ -29,7 +29,8 @@ LINK_DIVULGACAO_CANAL = os.getenv("LINK_CANAL", "https://t.me/seu_canal_aqui")
 TAG_MERCADO_LIVRE = os.getenv("TAG_ML", "salu8535714")
 TAG_SHOPEE = os.getenv("TAG_SHOPEE", "18176880013")
 
-INTERVALO_POSTAGEM = 600  # 1 minutos
+# Intervalo padrão configurado para 60 segundos (1 minuto)
+INTERVALO_POSTAGEM = int(os.getenv("INTERVALO_POSTAGEM", "60"))
 
 # --- BANCO DE DADOS EM MEMÓRIA PARA O RADAR DE DESEJOS (Função 1) ---
 # Estrutura: [{"user_id": 12345, "termo": "air fryer", "preco_max": 200.0}]
@@ -312,8 +313,9 @@ def processar_e_enviar(oferta):
         url_botao=oferta['link']
     )
 
-# --- ESCUTAR COMANDOS PRIVADOS PARA O RADAR DE DESEJOS ---
+# --- ESCUTAR COMANDOS PRIVADOS PARA O RADAR DE DESEJOS E CONFIGURAÇÃO ---
 def escutar_comandos_telegram():
+    global INTERVALO_POSTAGEM
     offset = 0
     while True:
         try:
@@ -330,10 +332,25 @@ def escutar_comandos_telegram():
                     if text.startswith("/start"):
                         boas_vindas = (
                             "👋 *Bem-vindo ao Bot do Radar de Ofertas!*\n\n"
-                            "Use o comando `/desejo produto, preco` para eu te avisar no privado assim que o produto aparecer em promoção!\n"
-                            "Exemplo:\n`/desejo air fryer, 200`"
+                            "• Use `/desejo produto, preco` para ser avisado no privado quando o produto aparecer em promoção.\n"
+                            "Exemplo: `/desejo air fryer, 200`\n\n"
+                            "• Use `/intervalo <minutos>` para alterar o tempo entre envios automáticos.\n"
+                            "Exemplo: `/intervalo 1` (para enviar a cada 1 minuto)"
                         )
                         requests.post(f"https://api.telegram.org/bot{TOKEN_BOT}/sendMessage", json={"chat_id": user_id, "text": boas_vindas, "parse_mode": "Markdown"})
+
+                    elif text.startswith("/intervalo") or text.startswith("/tempo"):
+                        try:
+                            partes = text.split()
+                            minutos = float(partes[1].strip())
+                            if minutos <= 0:
+                                raise ValueError
+                            INTERVALO_POSTAGEM = int(minutos * 60)
+                            resp_text = f"⏱️ *Intervalo alterado com sucesso!*\nO bot enviará ofertas a cada *{minutos} minuto(s)* ({INTERVALO_POSTAGEM} segundos)."
+                        except Exception:
+                            resp_text = "❌ Formato inválido! Use: `/intervalo 1` para 1 minuto ou `/intervalo 5` para 5 minutos."
+                        
+                        requests.post(f"https://api.telegram.org/bot{TOKEN_BOT}/sendMessage", json={"chat_id": user_id, "text": resp_text, "parse_mode": "Markdown"})
 
                     elif text.startswith("/desejo"):
                         try:
@@ -355,7 +372,7 @@ def escutar_comandos_telegram():
 
 # --- LOOP AUTOMÁTICO DE POSTAGENS ---
 def loop_postagem_automatica():
-    logging.info("🚀 Bot iniciado com Radar de Desejos, IA Gemini e Comparador de Preços!")
+    logging.info(f"🚀 Bot iniciado com postagens automáticas a cada {INTERVALO_POSTAGEM} segundos!")
 
     plataforma_atual = "ML"
     

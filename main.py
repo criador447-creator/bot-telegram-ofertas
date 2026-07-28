@@ -5,6 +5,7 @@ import logging
 import requests
 import json
 import re
+import html
 import threading
 import google.generativeai as genai
 from threading import Thread
@@ -24,7 +25,10 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 
 # Configuração da IA Gemini
 if GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY)
+    try:
+        genai.configure(api_key=GEMINI_API_KEY)
+    except Exception as e:
+        logging.error(f"Erro ao configurar Gemini AI: {e}")
 
 LINK_DIVULGACAO_CANAL = os.getenv("LINK_CANAL", "https://t.me/seu_canal_aqui")
 
@@ -55,9 +59,10 @@ def home():
 
 @app_web.route('/postar-oferta')
 def disparar_oferta():
-    # Coloque aqui a sua função que busca e envia a oferta para o Telegram
-    enviar_oferta_telegram()
-    return "Oferta enviada com sucesso!", 200
+    sucesso = enviar_oferta_telegram()
+    if sucesso:
+        return "Oferta enviada com sucesso!", 200
+    return "Falha ao buscar/enviar oferta.", 500
 
 def run_web():
     port = int(os.environ.get('PORT', 8080))
@@ -67,6 +72,16 @@ def keep_alive():
     t = Thread(target=run_web)
     t.daemon = True
     t.start()
+
+# --- HELPER PARA SANITIZAR TEXTOS NO MARKDOWN DO TELEGRAM ---
+def limpar_markdown(texto):
+    if not texto:
+        return ""
+    texto = html.unescape(str(texto))
+    # Remove caracteres especiais que podem quebrar a formatação do Telegram
+    for char in ["*", "_", "`", "[", "]"]:
+        texto = texto.replace(char, "")
+    return texto.strip()
 
 # --- GERAR LEGENDA PERSUASIVA COM IA ---
 def gerar_copy_ia(titulo, preco, origem):
@@ -79,7 +94,7 @@ def gerar_copy_ia(titulo, preco, origem):
             f"por R$ {preco:.2f} na loja {origem}. Use emojis marcantes. Não inclua hashtags ou links."
         )
         response = model.generate_content(prompt)
-        return response.text.strip() if response.text else None
+        return limpar_markdown(response.text.strip()) if response and response.text else None
     except Exception as e:
         logging.error(f"Erro ao gerar copy na IA: {e}")
         return None
@@ -148,15 +163,15 @@ def buscar_bug_preco(termo_busca=None):
             
             if bugs:
                 produto, desconto_val = random.choice(bugs)
-                titulo = produto.get("title")
+                titulo = limpar_markdown(produto.get("title", ""))
                 preco_atual = float(produto.get("price"))
                 preco_original = float(produto.get("original_price"))
-                link_original = produto.get("permalink")
+                link_original = produto.get("permalink", "")
                 
-                thumbnail = produto.get("thumbnail", "")
+                thumbnail = produto.get("thumbnail") or ""
                 foto = thumbnail.replace("-I.jpg", "-O.jpg").replace("-I.webp", "-O.jpg")
-                if not foto.startswith("http"):
-                    foto = f"https:{foto}"
+                if foto and not foto.startswith("http"):
+                    foto = f"https:{foto}" if foto.startswith("//") else f"https://{foto}"
                     
                 link_afiliado = f"{link_original}?matt_tool={TAG_MERCADO_LIVRE}" if "?" not in link_original else f"{link_original}&matt_tool={TAG_MERCADO_LIVRE}"
                 
@@ -193,19 +208,19 @@ def buscar_oferta_mercadolivre(termo_busca=None):
             
             if validos:
                 produto = random.choice(validos)
-                titulo = produto.get("title")
+                titulo = limpar_markdown(produto.get("title", ""))
                 preco_atual = float(produto.get("price"))
                 preco_original = produto.get("original_price")
                 if preco_original:
                     preco_original = float(preco_original)
                 
-                link_original = produto.get("permalink")
+                link_original = produto.get("permalink", "")
                 
-                # Imagem em Alta Resolução (substitui -I.jpg por -O.jpg)
-                thumbnail = produto.get("thumbnail", "")
+                # Imagem em Alta Resolução
+                thumbnail = produto.get("thumbnail") or ""
                 foto = thumbnail.replace("-I.jpg", "-O.jpg").replace("-I.webp", "-O.jpg")
-                if not foto.startswith("http"):
-                    foto = f"https:{foto}"
+                if foto and not foto.startswith("http"):
+                    foto = f"https:{foto}" if foto.startswith("//") else f"https://{foto}"
                 
                 shipping = produto.get("shipping", {})
                 frete_gratis = shipping.get("free_shipping", False)
@@ -266,7 +281,7 @@ def buscar_oferta_shopee(termo_busca=None):
             
             if validos:
                 item_info = random.choice(validos)
-                titulo = item_info.get("name")
+                titulo = limpar_markdown(item_info.get("name", ""))
                 preco_atual = float(item_info.get("price", 0)) / 100000
                 preco_original_raw = item_info.get("price_before_discount", 0)
                 preco_original = (float(preco_original_raw) / 100000) if preco_original_raw > 0 else None
@@ -328,7 +343,7 @@ def buscar_oferta_amazon(termo_busca=None):
                 pattern_title = rf'data-asin="{asin}".*?<span class="a-size-[^"]*?a-text-normal">(.*?)</span>'
                 title_match = re.search(pattern_title, res.text, re.DOTALL)
                 
-                # Extrai preço real (primeiro tenta a-offscreen completo, senão a-price-whole)
+                # Extrai preço real
                 pattern_price = rf'data-asin="{asin}".*?<span class="a-offscreen">(?:R\$\s*)?([\d.,]+)</span>'
                 price_match = re.search(pattern_price, res.text, re.DOTALL)
                 if not price_match:
@@ -337,7 +352,7 @@ def buscar_oferta_amazon(termo_busca=None):
                 
                 if img_match and title_match and price_match:
                     foto = img_match.group(1)
-                    titulo = title_match.group(1).strip()
+                    titulo = limpar_markdown(title_match.group(1))
                     preco_raw = price_match.group(1).strip()
                     
                     # Converte preço no formato pt-BR (ex: "1.299,00" -> 1299.00)
@@ -409,7 +424,8 @@ def verificar_radar_desejos(oferta):
                     "parse_mode": "Markdown"
                 }
                 requests.post(url, json=payload, timeout=5)
-                RADAR_DESEJOS.remove(pedido)
+                if pedido in RADAR_DESEJOS:
+                    RADAR_DESEJOS.remove(pedido)
             except Exception as e:
                 logging.error(f"Erro ao enviar alerta privado do Radar: {e}")
 
@@ -511,6 +527,9 @@ def escutar_comandos_telegram():
                     text = msg.get("text", "")
                     user_id = msg.get("from", {}).get("id")
 
+                    if not user_id:
+                        continue
+
                     if text.startswith("/start"):
                         boas_vindas = (
                             "👋 *Bem-vindo ao Bot do Radar de Ofertas Reais!*\n\n"
@@ -554,7 +573,7 @@ def escutar_comandos_telegram():
                             
                             RADAR_DESEJOS.append({"user_id": user_id, "termo": termo, "preco_max": preco_max})
                             
-                            resp_text = f"✅ *Alerta registrado!* Te avisarei assim que encontrarmos *{termo}* por até R$ {preco_max:.2f}!"
+                            resp_text = f"✅ *Alerta registrado!* Te avisarei assim que encontrarmos *{limpar_markdown(termo)}* por até R$ {preco_max:.2f}!"
                         except Exception:
                             resp_text = "❌ Formato inválido! Use: `/desejo nome do produto, preco maximo`\nExemplo: `/desejo celular, 800`"
                         
@@ -573,15 +592,15 @@ def rodar_loop_ofertas():
             logging.error(f"Erro ao enviar oferta: {e}")
         time.sleep(INTERVALO_POSTAGEM)
 
-# Inicia a thread de ofertas em segundo plano antes do Flask rodar
-threading.Thread(target=rodar_loop_ofertas, daemon=True).start()
-
 if __name__ == '__main__':
     keep_alive()
     
+    # Thread do Loop Automático de Ofertas
+    t_ofertas = Thread(target=rodar_loop_ofertas, daemon=True)
+    t_ofertas.start()
+
     # Thread do Radar / Comandos
-    t_cmd = Thread(target=escutar_comandos_telegram)
-    t_cmd.daemon = True
+    t_cmd = Thread(target=escutar_comandos_telegram, daemon=True)
     t_cmd.start()
     
     while True:

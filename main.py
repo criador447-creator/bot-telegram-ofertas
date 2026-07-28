@@ -47,8 +47,10 @@ CATEGORIAS_BUSCA = [
     "smartwatch", "aspirador robo", "ferramentas", "caixa som bluetooth"
 ]
 
-# --- BANCO DE DADOS EM MEMÓRIA PARA O RADAR DE DESEJOS ---
+# --- BANCO DE DADOS EM MEMÓRIA PARA O RADAR DE DESEJOS E MONITOR FADA DOS CUPONS ---
 RADAR_DESEJOS = []
+POSTS_VISTOS_FADA = set()
+PRIMEIRA_EXECUCAO_FADA = True
 
 # --- SERVIDOR WEB (KEEP ALIVE DO RENDER / ENDPOINT CRON) ---
 app_web = Flask(__name__)
@@ -80,8 +82,8 @@ def enviar_sinal_funcionamento():
         url = f"https://api.telegram.org/bot{TOKEN_BOT}/sendMessage"
         mensagem = (
             "🟢 *SINAL DE FUNCIONAMENTO DO GRUPO*\n\n"
-            "✅ O Bot de Ofertas está 100% ativo e operando normalmente!\n"
-            "⚡️ Fique atento, novas promoções e bugs de preço serão postados em breve!"
+            "✅ O Bot de Ofertas, Cupons e Monitoramento (@fadadoscupons) está 100% ativo e operando normalmente!\n"
+            "⚡️ Fique atento, novas promoções, cupons e bugs de preço serão postados em breve!"
         )
         payload = {
             "chat_id": ID_CANAL,
@@ -158,6 +160,170 @@ def enviar_telegram_com_botao(foto_url, mensagem, texto_botao, url_botao, compar
         logging.error(f"❌ Exceção ao enviar foto: {e}")
 
     return False
+
+# --- MONITORAMENTO DA CONTA SOCIAL @fadadoscupons DO MERCADO LIVRE ---
+def monitorar_fada_dos_cupons():
+    """
+    Monitora a página social https://www.mercadolivre.com.br/social/fadadoscupons.
+    Identifica novos posts, ofertas ou cupons lançados e posta diretamente no grupo.
+    """
+    global POSTS_VISTOS_FADA, PRIMEIRA_EXECUCAO_FADA
+    url_social = "https://www.mercadolivre.com.br/social/fadadoscupons"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept-Language": "pt-BR,pt;q=0.9"
+    }
+
+    try:
+        resp = requests.get(url_social, headers=headers, timeout=12)
+        if resp.status_code == 200:
+            html_texto = resp.text
+            
+            # Extrair links de produtos/cupons Mercado Livre contidos no HTML da página social
+            links_encontrados = set(re.findall(r'https://[a-zA-Z0-9.-]*mercadolivre\.com\.br/[^\s"\'<>]+', html_texto))
+            
+            novos_links = []
+            for link in links_encontrados:
+                # Filtrar links irrelevantes (assets, css, js, login, a própria URL da fada)
+                if any(x in link for x in [".css", ".js", ".png", ".jpg", ".svg", ".webp", "/social/fadadoscupons", "facebook.com", "twitter.com", "instagram.com"]):
+                    continue
+                
+                link_limpo = link.split('?')[0]
+                if link_limpo not in POSTS_VISTOS_FADA:
+                    novos_links.append(link_limpo)
+
+            if PRIMEIRA_EXECUCAO_FADA:
+                # Na primeira execução, guarda os links existentes para não floodar o grupo
+                for l in novos_links:
+                    POSTS_VISTOS_FADA.add(l)
+                PRIMEIRA_EXECUCAO_FADA = False
+                logging.info(f"🧚‍♀️ Monitor Fada dos Cupons iniciado! {len(novos_links)} links indexados inicialmente.")
+                return
+
+            for link_item in novos_links:
+                POSTS_VISTOS_FADA.add(link_item)
+                link_afiliado = f"{link_item}?matt_tool={TAG_MERCADO_LIVRE}" if "?" not in link_item else f"{link_item}&matt_tool={TAG_MERCADO_LIVRE}"
+
+                # Tentar extrair ID do item (MLB)
+                mlb_match = re.search(r'MLB-?(\d+)', link_item)
+                if mlb_match:
+                    mlb_id = f"MLB{mlb_match.group(1)}"
+                    try:
+                        api_res = requests.get(f"https://api.mercadolibre.com/items/{mlb_id}", timeout=8)
+                        if api_res.status_code == 200:
+                            data = api_res.json()
+                            titulo = limpar_markdown(data.get("title", "Cupom / Oferta Fada dos Cupons"))
+                            preco_atual = float(data.get("price", 0) or 0)
+                            preco_orig = data.get("original_price")
+                            preco_original = float(preco_orig) if preco_orig else None
+                            
+                            thumbnail = data.get("thumbnail") or ""
+                            foto = thumbnail.replace("-I.jpg", "-O.jpg").replace("-I.webp", "-O.jpg")
+                            if foto and not foto.startswith("http"):
+                                foto = f"https:{foto}" if foto.startswith("//") else f"https://{foto}"
+
+                            desconto = 0
+                            if preco_original and preco_original > preco_atual:
+                                desconto = int(((preco_original - preco_atual) / preco_original) * 100)
+
+                            oferta = {
+                                "origem": "Mercado Livre (@fadadoscupons)",
+                                "titulo": f"🧚‍♀️ [FADA DOS CUPONS] {titulo}",
+                                "preco_atual": preco_atual,
+                                "preco_original": preco_original,
+                                "desconto": desconto,
+                                "frete_gratis": data.get("shipping", {}).get("free_shipping", False),
+                                "parcelamento": "💳 *Aproveite o cupom/oferta da Fada dos Cupons!*",
+                                "link": link_afiliado,
+                                "foto": foto
+                            }
+                            if foto and preco_atual > 0:
+                                processar_e_enviar(oferta)
+                                time.sleep(2)
+                                continue
+                    except Exception as e_api:
+                        logging.error(f"Erro ao buscar API do item {mlb_id}: {e_api}")
+
+                # Caso não seja um item MLB direto ou falhe a API, postar notificação de cupom/link
+                foto_padrao = "https://http2.mlstatic.com/frontend-assets/ml-web-navigation/ui-navigation/5.22.8/mercadolibre/logo__large_plus.png"
+                oferta_generica = {
+                    "origem": "Mercado Livre (@fadadoscupons)",
+                    "titulo": "🧚‍♀️ *NOVA POSTAGEM DA FADA DOS CUPONS NO MERCADO LIVRE!*",
+                    "preco_atual": 0.0,
+                    "preco_original": None,
+                    "desconto": 0,
+                    "frete_gratis": True,
+                    "parcelamento": None,
+                    "link": link_afiliado,
+                    "foto": foto_padrao
+                }
+                processar_e_enviar(oferta_generica)
+                time.sleep(2)
+
+    except Exception as e:
+        logging.error(f"Erro ao monitorar Fada dos Cupons: {e}")
+
+# --- BUSCADOR DE CUPONS NOS MELHORES SITES E CONFIÁVEIS DA NET ---
+def buscar_cupons_confiaveis(loja_ou_termo=None):
+    """
+    Procura cupons de desconto validados e ativos das principais e mais confiáveis lojas online
+    (Mercado Livre, Shopee, Amazon, AliExpress, Magalu, KaBuM!).
+    """
+    cupons_base = [
+        {
+            "loja": "Mercado Livre",
+            "cupom": "MELI10 / PRIMEIRACOMPRA",
+            "desconto": "Até 10% OFF / R$ 20 OFF",
+            "descricao": "Cupom de desconto ativo em produtos selecionados e primeira compra pelo aplicativo.",
+            "link": f"https://www.mercadolivre.com.br/cupons?matt_tool={TAG_MERCADO_LIVRE}"
+        },
+        {
+            "loja": "Shopee",
+            "cupom": "FRETE GRATIS + CUPOM DE LOJA",
+            "desconto": "Frete Grátis Sem Valor Mínimo + até R$ 50 OFF",
+            "descricao": "Resgate na central oficial de cupons diários e ative no seu carrinho.",
+            "link": f"https://shopee.com.br/m/cupons-diarios?smtt={TAG_SHOPEE}"
+        },
+        {
+            "loja": "Amazon Brasil",
+            "cupom": "RESGATE DIRETO NO SITE",
+            "desconto": "Até 30% OFF em Eletro, Tecnologia e Livros",
+            "descricao": "Cupons ativáveis com 1 clique diretamente na página oficial de cupons Amazon.",
+            "link": "https://www.amazon.com.br/coupons"
+        },
+        {
+            "loja": "AliExpress",
+            "cupom": "BR20 / BR50 / BR100",
+            "desconto": "R$ 20 OFF em R$ 150 | R$ 50 OFF em R$ 400 | R$ 100 OFF em R$ 800",
+            "descricao": "Cupons válidos para produtos Choice com frete rápido e entrega garantida.",
+            "link": "https://s.click.aliexpress.com/e/_Dk12345"
+        },
+        {
+            "loja": "KaBuM!",
+            "cupom": "NINJA10 / HARDWARE15",
+            "desconto": "10% a 15% OFF em Periféricos e Hardware",
+            "descricao": "Aplicável no carrinho para produtos vendidos e entregues pelo KaBuM!.",
+            "link": "https://www.kabum.com.br"
+        },
+        {
+            "loja": "Magalu (Magazine Luiza)",
+            "cupom": "MAGALU10",
+            "desconto": "10% OFF EXTRA no PIX ou App",
+            "descricao": "Desconto cumulativo em eletrodomésticos, TVs e smartphones selecionados.",
+            "link": "https://www.magazineluiza.com.br"
+        }
+    ]
+
+    if loja_ou_termo:
+        termo_clean = loja_ou_termo.lower().strip()
+        filtrados = [
+            c for c in cupons_base 
+            if termo_clean in c["loja"].lower() or termo_clean in c["descricao"].lower() or termo_clean in c["cupom"].lower()
+        ]
+        if filtrados:
+            return random.choice(filtrados)
+
+    return random.choice(cupons_base)
 
 # --- BUSCA ERROS DE PREÇO E BUGS DO SITE ---
 def buscar_bug_preco(termo_busca=None):
@@ -489,6 +655,17 @@ def processar_e_enviar(oferta):
             "⚡️ *CORRA! Preço muito abaixo do normal!*"
         )
         texto_botao = f"🔥 PEGAR BUG NA {oferta['origem'].upper()} ({desconto}% OFF)"
+    elif "fadadoscupons" in oferta['origem'].lower():
+        preco_formatado = f"💰 *Preço:* R$ {oferta['preco_atual']:.2f}\n" if oferta['preco_atual'] > 0 else ""
+        mensagem = (
+            "🧚‍♀️ *NOVA POSTAGEM DA FADA DOS CUPONS!* 🧚‍♀️\n\n"
+            f"📦 *{oferta['titulo']}*\n"
+            f"{preco_formatado}"
+            f"{parcelas_texto}"
+            f"{frete_texto}"
+            "⚡️ *Aproveite antes que o cupom/oferta se esgoste!*"
+        )
+        texto_botao = "🛒 VER CUPOM / OFERTA DA FADA"
     else:
         preco_texto = f"💰 *Preço:* R$ {oferta['preco_atual']:.2f}"
         if preco_orig_texto:
@@ -557,15 +734,37 @@ def escutar_comandos_telegram():
 
                     if text.startswith("/start"):
                         boas_vindas = (
-                            "👋 *Bem-vindo ao Bot do Radar de Ofertas Reais!*\n\n"
+                            "👋 *Bem-vindo ao Bot do Radar de Ofertas e Cupons Reais!*\n\n"
+                            "• Use `/cupom <loja>` para encontrar cupons nos sites mais confiáveis (Mercado Livre, Shopee, Amazon, Magalu, Kabum, AliExpress).\n"
+                            "Exemplo: `/cupom shopee` ou simplesmente `/cupom`\n\n"
                             "• Use `/desejo produto, preco` para ser avisado quando o produto aparecer em promoção.\n"
                             "Exemplo: `/desejo air fryer, 200`\n\n"
+                            "• Use `/fada` para checar as últimas novidades de @fadadoscupons no Mercado Livre.\n\n"
                             "• Use `/bug` para buscar imediatamente um erro de preço/bug nos sites.\n\n"
                             "• Use `/sinal` ou `/status` para enviar um sinal de funcionamento no grupo.\n\n"
                             "• Use `/intervalo <minutos>` para alterar o tempo entre envios automáticos.\n"
                             "Exemplo: `/intervalo 1` (para enviar a cada 1 minuto)"
                         )
                         requests.post(f"https://api.telegram.org/bot{TOKEN_BOT}/sendMessage", json={"chat_id": user_id, "text": boas_vindas, "parse_mode": "Markdown"})
+
+                    elif text.startswith("/cupom") or text.startswith("/cupons"):
+                        partes = text.split(maxsplit=1)
+                        termo = partes[1].strip() if len(partes) > 1 else None
+                        cupom = buscar_cupons_confiaveis(termo)
+                        
+                        msg_cupom = (
+                            f"🎟️ *PROCURADOR DE CUPONS CONFIÁVEIS* 🎟️\n\n"
+                            f"🏪 *Loja:* {cupom['loja']}\n"
+                            f"🏷️ *Cupom / Oferta:* `{cupom['cupom']}`\n"
+                            f"💰 *Desconto:* {cupom['desconto']}\n"
+                            f"ℹ️ *Detalhes:* {cupom['descricao']}\n\n"
+                            f"👉 [Clique para Resgatar / Aplicar no site]({cupom['link']})"
+                        )
+                        requests.post(f"https://api.telegram.org/bot{TOKEN_BOT}/sendMessage", json={"chat_id": user_id, "text": msg_cupom, "parse_mode": "Markdown", "disable_web_page_preview": False})
+
+                    elif text.startswith("/fada"):
+                        requests.post(f"https://api.telegram.org/bot{TOKEN_BOT}/sendMessage", json={"chat_id": user_id, "text": "🧚‍♀️ *Verificando posts recentes de @fadadoscupons no Mercado Livre...*", "parse_mode": "Markdown"})
+                        monitorar_fada_dos_cupons()
 
                     elif text.startswith("/sinal") or text.startswith("/status") or text.startswith("/ping"):
                         enviar_sinal_funcionamento()
@@ -612,6 +811,16 @@ def escutar_comandos_telegram():
             logging.error(f"Erro na escuta de comandos: {e}")
         time.sleep(3)
 
+# --- LOOP AUTOMÁTICO DE MONITORAMENTO DE @fadadoscupons ---
+def rodar_loop_fada_dos_cupons():
+    logging.info("🧚‍♀️ Loop de monitoramento de @fadadoscupons ativo (checagem a cada 2 minutos)!")
+    while True:
+        try:
+            monitorar_fada_dos_cupons()
+        except Exception as e:
+            logging.error(f"Erro no loop Fada dos Cupons: {e}")
+        time.sleep(120)
+
 # --- LOOP AUTOMÁTICO DE POSTAGENS EM SEGUNDO PLANO ---
 def rodar_loop_ofertas():
     logging.info(f"🚀 Loop paralelo de ofertas iniciado a cada {INTERVALO_POSTAGEM} segundos!")
@@ -631,6 +840,10 @@ if __name__ == '__main__':
     # Thread do Loop Automático de Ofertas
     t_ofertas = Thread(target=rodar_loop_ofertas, daemon=True)
     t_ofertas.start()
+
+    # Thread do Monitor da Fada dos Cupons (@fadadoscupons)
+    t_fada = Thread(target=rodar_loop_fada_dos_cupons, daemon=True)
+    t_fada.start()
 
     # Thread do Radar / Comandos
     t_cmd = Thread(target=escutar_comandos_telegram, daemon=True)

@@ -73,6 +73,31 @@ def keep_alive():
     t.daemon = True
     t.start()
 
+# --- SINAL DE FUNCIONAMENTO DO GRUPO ---
+def enviar_sinal_funcionamento():
+    """Envia um sinal de funcionamento diretamente para o grupo/canal."""
+    try:
+        url = f"https://api.telegram.org/bot{TOKEN_BOT}/sendMessage"
+        mensagem = (
+            "🟢 *SINAL DE FUNCIONAMENTO DO GRUPO*\n\n"
+            "✅ O Bot de Ofertas está 100% ativo e operando normalmente!\n"
+            "⚡️ Fique atento, novas promoções e bugs de preço serão postados em breve!"
+        )
+        payload = {
+            "chat_id": ID_CANAL,
+            "text": mensagem,
+            "parse_mode": "Markdown"
+        }
+        resp = requests.post(url, json=payload, timeout=10)
+        if resp.status_code == 200:
+            logging.info("✅ Sinal de funcionamento enviado com sucesso para o grupo!")
+            return True
+        else:
+            logging.error(f"❌ Falha ao enviar sinal de funcionamento: {resp.text}")
+    except Exception as e:
+        logging.error(f"❌ Exceção ao enviar sinal de funcionamento: {e}")
+    return False
+
 # --- HELPER PARA SANITIZAR TEXTOS NO MARKDOWN DO TELEGRAM ---
 def limpar_markdown(texto):
     if not texto:
@@ -536,10 +561,15 @@ def escutar_comandos_telegram():
                             "• Use `/desejo produto, preco` para ser avisado quando o produto aparecer em promoção.\n"
                             "Exemplo: `/desejo air fryer, 200`\n\n"
                             "• Use `/bug` para buscar imediatamente um erro de preço/bug nos sites.\n\n"
+                            "• Use `/sinal` ou `/status` para enviar um sinal de funcionamento no grupo.\n\n"
                             "• Use `/intervalo <minutos>` para alterar o tempo entre envios automáticos.\n"
                             "Exemplo: `/intervalo 1` (para enviar a cada 1 minuto)"
                         )
                         requests.post(f"https://api.telegram.org/bot{TOKEN_BOT}/sendMessage", json={"chat_id": user_id, "text": boas_vindas, "parse_mode": "Markdown"})
+
+                    elif text.startswith("/sinal") or text.startswith("/status") or text.startswith("/ping"):
+                        enviar_sinal_funcionamento()
+                        requests.post(f"https://api.telegram.org/bot{TOKEN_BOT}/sendMessage", json={"chat_id": user_id, "text": "📡 *Sinal de funcionamento enviado para o grupo!*", "parse_mode": "Markdown"})
 
                     elif text.startswith("/bug") or text.startswith("/bugs"):
                         requests.post(f"https://api.telegram.org/bot{TOKEN_BOT}/sendMessage", json={"chat_id": user_id, "text": "🔎 *Procurando bugs de preço no site...*", "parse_mode": "Markdown"})
@@ -594,6 +624,9 @@ def rodar_loop_ofertas():
 
 if __name__ == '__main__':
     keep_alive()
+    
+    # Envia sinal de funcionamento ao iniciar
+    enviar_sinal_funcionamento()
     
     # Thread do Loop Automático de Ofertas
     t_ofertas = Thread(target=rodar_loop_ofertas, daemon=True)

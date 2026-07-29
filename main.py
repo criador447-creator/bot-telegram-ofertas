@@ -6,8 +6,10 @@ import requests
 import json
 import re
 import html
+import io
 import threading
 import google.generativeai as genai
+from PIL import Image
 from threading import Thread
 from flask import Flask
 
@@ -102,6 +104,26 @@ def gerar_copy_ia(titulo, preco, origem):
         logging.error(f"Erro ao gerar copy na IA: {e}")
         return None
 
+# --- IDENTIFICAR PRODUTO POR IMAGEM / OCR COM GEMINI ---
+def identificar_produto_por_imagem(image_bytes):
+    if not GEMINI_API_KEY:
+        logging.warning("⚠️ GEMINI_API_KEY não configurada para análise de imagem.")
+        return None
+    try:
+        model = genai.GenerativeModel('gemini-1.5-flash')
+        image = Image.open(io.BytesIO(image_bytes))
+        prompt = (
+            "Analise este print/imagem de anúncio ou produto de loja online. "
+            "Identifique o nome exato do produto, marca e modelo apresentados. "
+            "Retorne APENAS o nome do produto de forma concisa para busca (máximo 6 palavras). Não inclua explicações ou pontuação extra."
+        )
+        response = model.generate_content([prompt, image])
+        if response and response.text:
+            return limpar_markdown(response.text.strip())
+    except Exception as e:
+        logging.error(f"Erro ao identificar produto por imagem com Gemini: {e}")
+    return None
+
 # --- HISTÓRICO DE PREÇOS E MENOR PREÇO HISTÓRICO ---
 def registrar_e_verificar_menor_preco(chave, preco_atual, preco_original=None):
     """
@@ -112,7 +134,7 @@ def registrar_e_verificar_menor_preco(chave, preco_atual, preco_original=None):
         return False
 
     agora = time.time()
-    limite_90_dias = agora - (90 * 86400)
+    limite_90_dias = me = agora - (90 * 86400)
 
     if chave not in HISTORICO_PRECOS:
         HISTORICO_PRECOS[chave] = []
@@ -790,6 +812,7 @@ def escutar_comandos_telegram():
                     offset = u["update_id"] + 1
                     msg = u.get("message", {})
                     text = msg.get("text", "")
+                    photos = msg.get("photo", [])
                     user_id = msg.get("from", {}).get("id")
                     chat_id = msg.get("chat", {}).get("id", user_id)
 
@@ -818,10 +841,93 @@ def escutar_comandos_telegram():
                     if not user_id:
                         continue
 
+                    # --- LEITOR DE IMAGEM / OCR (IA GEMINI) ---
+                    if photos:
+                        try:
+                            requests.post(
+                                f"https://api.telegram.org/bot{TOKEN_BOT}/sendMessage",
+                                json={"chat_id": chat_id, "text": "📸 *Imagem recebida!* Analisando o produto com IA Gemini...", "parse_mode": "Markdown"}
+                            )
+
+                            file_id = photos[-1].get("file_id")
+                            res_file = requests.get(f"https://api.telegram.org/bot{TOKEN_BOT}/getFile?file_id={file_id}", timeout=10)
+                            
+                            if res_file.status_code == 200:
+                                file_path = res_file.json().get("result", {}).get("file_path")
+                                img_url = f"https://api.telegram.org/file/bot{TOKEN_BOT}/{file_path}"
+                                img_resp = requests.get(img_url, timeout=15)
+
+                                if img_resp.status_code == 200:
+                                    nome_identificado = identificar_produto_por_imagem(img_resp.content)
+                                    if nome_identificado:
+                                        msg_ident = (
+                                            f"🤖 *Produto Identificado pela IA:* {nome_identificado}\n\n"
+                                            "🔎 Buscando o menor preço nas principais lojas..."
+                                        )
+                                        requests.post(
+                                            f"https://api.telegram.org/bot{TOKEN_BOT}/sendMessage",
+                                            json={"chat_id": chat_id, "text": msg_ident, "parse_mode": "Markdown"}
+                                        )
+
+                                        # Busca o produto nas lojas parceiras
+                                        buscadores_ocr = [
+                                            ("Mercado Livre", buscar_oferta_mercadolivre),
+                                            ("Shopee", buscar_oferta_shopee),
+                                            ("Amazon", buscar_oferta_amazon)
+                                        ]
+
+                                        resultados_ocr = []
+                                        for nome_loja, fn_busca in buscadores_ocr:
+                                            try:
+                                                of = fn_busca(nome_identificado)
+                                                if of and of.get("preco_atual", 0) > 0:
+                                                    resultados_ocr.append(of)
+                                            except Exception as e_bocr:
+                                                logging.error(f"Erro ao buscar em OCR para {nome_loja}: {e_bocr}")
+
+                                        if resultados_ocr:
+                                            resultados_ocr.sort(key=lambda x: x["preco_atual"])
+                                            melhor_of = resultados_ocr[0]
+
+                                            desc_str = f" ({melhor_of['desconto']}% OFF)" if melhor_of.get('desconto') else ""
+                                            frete_str = "📦 Frete Grátis!" if melhor_of.get('frete_gratis') else ""
+
+                                            msg_resultado = (
+                                                f"🏆 *MENOR PREÇO ENCONTRADO PARA:* {nome_identificado}\n\n"
+                                                f"📦 *Produto:* {melhor_of['titulo']}\n"
+                                                f"🏪 *Loja:* {melhor_of['origem']}\n"
+                                                f"💰 *Preço:* R$ {melhor_of['preco_atual']:.2f}{desc_str}\n"
+                                                f"{frete_str}\n\n"
+                                                f"👉 [Clique para comprar pelo menor preço!]({melhor_of['link']})"
+                                            )
+                                            requests.post(
+                                                f"https://api.telegram.org/bot{TOKEN_BOT}/sendMessage",
+                                                json={"chat_id": chat_id, "text": msg_resultado, "parse_mode": "Markdown", "disable_web_page_preview": False}
+                                            )
+                                        else:
+                                            requests.post(
+                                                f"https://api.telegram.org/bot{TOKEN_BOT}/sendMessage",
+                                                json={"chat_id": chat_id, "text": f"❌ Não encontramos ofertas para *{nome_identificado}* no momento. Tente novamente mais tarde!", "parse_mode": "Markdown"}
+                                            )
+                                    else:
+                                        requests.post(
+                                            f"https://api.telegram.org/bot{TOKEN_BOT}/sendMessage",
+                                            json={"chat_id": chat_id, "text": "⚠️ Não foi possível identificar o produto na imagem. Envie uma imagem nítida da embalagem ou da tela do anúncio.", "parse_mode": "Markdown"}
+                                        )
+                        except Exception as e_ocr:
+                            logging.error(f"Erro no processamento OCR de imagem: {e_ocr}")
+                            requests.post(
+                                f"https://api.telegram.org/bot{TOKEN_BOT}/sendMessage",
+                                json={"chat_id": chat_id, "text": "❌ Ocorreu um erro ao processar a imagem. Tente enviar novamente.", "parse_mode": "Markdown"}
+                            )
+                        continue
+
                     if text.startswith("/start"):
                         nome_usuario = limpar_markdown(msg.get("from", {}).get("first_name", "Usuário"))
                         boas_vindas = (
                             f"👋 *Olá, {nome_usuario}! Seja bem-vindo ao Bot Garimpeiro dos Mais Vendidos!* 🎉\n\n"
+                            "📸 *NOVO: Leitor de Imagem / OCR por IA!*\n"
+                            "Envie a foto ou print de qualquer produto e a IA identificará o item e buscará o menor preço para você!\n\n"
                             "• Use `/cupom <loja>` para encontrar cupons confiáveis (Mercado Livre, Shopee, Amazon, Magalu, Kabum, AliExpress).\n"
                             "Exemplo: `/cupom ferramentas` ou `/cupom shopee`\n\n"
                             "• Use `/desejo produto, preco` para criar alerta no seu radar.\n"

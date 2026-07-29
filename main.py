@@ -38,15 +38,15 @@ LINK_DIVULGACAO_CANAL = os.getenv("LINK_CANAL", "https://t.me/seu_canal_aqui")
 TAG_MERCADO_LIVRE = os.getenv("TAG_ML", "salu8535714")
 TAG_SHOPEE = os.getenv("TAG_SHOPEE", "18176880013")
 
-# Intervalo padrão configurado para 60 segundos (1 minuto) para manter 24 horas ativas
-INTERVALO_POSTAGEM = int(os.getenv("INTERVALO_POSTAGEM", "60"))
+# Intervalo configurado para garantir MAIS DE 10 OFERTAS POR DIA (padrão: 300s = 5 min => ~288 ofertas/dia)
+INTERVALO_POSTAGEM = int(os.getenv("INTERVALO_POSTAGEM", "300"))
 
 # TERMOS DE BUSCA FOCADOS EM PRODUTOS MAIS VENDIDOS E CAMPEÕES DE VENDAS DO MÊS
 CATEGORIAS_BUSCA = [
     "mais vendidos do mes", "campeoes de vendas", "top vendas", "ferramentas mais vendidas", "kit ferramentas profissional", 
     "parafusadeira furadeira", "jogo de chaves", "maleta de ferramentas", "smartphone mais vendido", "celulares em promocao", 
     "samsung galaxy", "xiaomi", "iphone", "fone bluetooth mais vendido", "fone de ouvido sem fio", "airpods", 
-    "ofertas imperdiveis", "promocao relampago", "oferta do dia", "bugs de preco", "desconto imperdivel"
+    "ofertas imperdiveis", "promocao relampago", "oferta do dia", "bugs de preco", "desconto imperdivel", "erro de preco"
 ]
 
 # --- BANCO DE DADOS EM MEMÓRIA PARA O RADAR DE DESEJOS, HISTÓRICO DE PREÇOS E MONITOR FADA DOS CUPONS ---
@@ -64,7 +64,7 @@ HTML_LAYOUT = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Bot de Ofertas Imperdíveis 24h</title>
+    <title>Bot de Ofertas Imperdíveis & Alerta de Bugs 24h</title>
     <style>
         :root {
             --primary: #2563eb;
@@ -203,7 +203,7 @@ HTML_LAYOUT = """
             transition: background-color 0.2s;
             border: none;
             cursor: pointer;
-            box-sizing: border-border;
+            box-sizing: border-box;
         }
         .btn:hover {
             background-color: var(--primary-hover);
@@ -230,10 +230,10 @@ HTML_LAYOUT = """
 <body>
     <div class="container">
         <header>
-            <h1>🤖 Bot de Ofertas Imperdíveis 24h</h1>
-            <p>Monitoramento automático de promoções, cupons e bugs de preço</p>
+            <h1>🤖 Bot de Ofertas & Alertas de Bug (+10/dia)</h1>
+            <p>Monitoramento automático e contínuo de promoções, cupons e bugs de preço</p>
             <div class="status-badge">
-                <span class="status-dot"></span> Sistema Ativo 24/7
+                <span class="status-dot"></span> Envio Ativo (+10 ofertas por dia)
             </div>
         </header>
 
@@ -246,8 +246,8 @@ HTML_LAYOUT = """
         <div class="grid">
             <div class="card">
                 <div>
-                    <h2>🚀 Disparar Oferta</h2>
-                    <p>Força a busca e o envio imediato de uma oferta imperdível para o canal do Telegram.</p>
+                    <h2>🚀 Disparar Oferta / Bug</h2>
+                    <p>Força a busca e o envio imediato de uma oferta imperdível ou alerta de bug para o canal do Telegram.</p>
                 </div>
                 <a href="/postar-oferta" class="btn">Disparar Agora</a>
             </div>
@@ -258,6 +258,10 @@ HTML_LAYOUT = """
                     <div class="stat-item">
                         <span>Intervalo de postagem</span>
                         <strong>{{ intervalo }}s</strong>
+                    </div>
+                    <div class="stat-item">
+                        <span>Meta diária</span>
+                        <strong>+10 Ofertas / dia</strong>
                     </div>
                     <div class="stat-item">
                         <span>Links Fada dos Cupons</span>
@@ -275,7 +279,7 @@ HTML_LAYOUT = """
         </div>
     </div>
     <footer>
-        &copy; Bot de Ofertas Imperdíveis 24h &bull; Layout Responsivo
+        &copy; Bot de Ofertas & Alertas de Bug 24h &bull; Layout Responsivo
     </footer>
 </body>
 </html>
@@ -293,7 +297,7 @@ def home():
 @app_web.route('/postar-oferta')
 def disparar_oferta():
     sucesso = enviar_oferta_telegram()
-    mensagem = "Oferta imperdível enviada com sucesso!" if sucesso else "Falha ao buscar/enviar oferta."
+    mensagem = "Oferta ou alerta de bug enviado com sucesso!" if sucesso else "Falha ao buscar/enviar oferta."
     status_class = "success" if sucesso else "error"
     
     return render_template_string(
@@ -329,7 +333,6 @@ def limpar_markdown(texto):
     if not texto:
         return ""
     texto = html.unescape(str(texto))
-    # Remove caracteres especiais que podem quebrar a formatação do Telegram
     for char in ["*", "_", "`", "[", "]"]:
         texto = texto.replace(char, "")
     return texto.strip()
@@ -342,7 +345,7 @@ def gerar_copy_ia(titulo, preco, origem):
         model = genai.GenerativeModel('gemini-1.5-flash')
         prompt = (
             f"Crie uma legenda muito curta, empolgante e persuasiva (máximo 2 frases) para vender o produto '{titulo}' "
-            f"por R$ {preco:.2f} na loja {origem}. Destaque que é uma OFERTA IMPERDÍVEL 24H e campeã de vendas! Use emojis marcantes. Não inclua hashtags ou links."
+            f"por R$ {preco:.2f} na loja {origem}. Destaque que é uma OFERTA IMPERDÍVEL / ALERTA DE BUG DE PREÇO! Use emojis marcantes. Não inclua hashtags ou links."
         )
         response = model.generate_content(prompt)
         if response and hasattr(response, 'text') and response.text:
@@ -409,7 +412,7 @@ def enviar_telegram_com_botao(foto_url, mensagem, texto_botao, url_botao, compar
     if comparar_texto:
         botoes.append([{"text": comparar_texto, "url": url_botao}])
         
-    botoes.append([{"text": "📢 Entrar no Canal Oficial de Ofertas 24h", "url": LINK_DIVULGACAO_CANAL}])
+    botoes.append([{"text": "📢 Entrar no Canal Oficial de Ofertas & Bugs", "url": LINK_DIVULGACAO_CANAL}])
 
     reply_markup = {"inline_keyboard": botoes}
 
@@ -424,7 +427,7 @@ def enviar_telegram_com_botao(foto_url, mensagem, texto_botao, url_botao, compar
         }
         resp = requests.post(url, json=payload, timeout=12)
         if resp.status_code == 200:
-            logging.info("✅ Oferta imperdível 24h enviada com SUCESSO!")
+            logging.info("✅ Oferta/Bug enviado com SUCESSO!")
             return True
         else:
             logging.error(f"❌ Erro da API Telegram ao enviar foto: {resp.text}")
@@ -500,7 +503,7 @@ def monitorar_fada_dos_cupons():
                                 "preco_original": preco_original,
                                 "desconto": desconto,
                                 "frete_gratis": data.get("shipping", {}).get("free_shipping", False),
-                                "parcelamento": "💳 *Aproveite a oferta imperdível 24h!*",
+                                "parcelamento": "💳 *Aproveite a oferta imperdível!*",
                                 "vendas": destaque_vendas,
                                 "link": link_afiliado,
                                 "foto": foto
@@ -571,7 +574,7 @@ def buscar_cupons_confiaveis(loja_ou_termo=None):
 # --- BUSCA ERROS DE PREÇO E BUGS DO SITE ---
 def buscar_bug_preco(termo_busca=None):
     if not termo_busca:
-        termo_busca = random.choice(["mais vendidos", "smartphone", "celular", "ferramentas", "parafusadeira", "fone bluetooth", "fone de ouvido", "iphone", "kit ferramentas"])
+        termo_busca = random.choice(["mais vendidos", "smartphone", "celular", "ferramentas", "parafusadeira", "fone bluetooth", "fone de ouvido", "iphone", "kit ferramentas", "notebook"])
     
     try:
         url = f"https://api.mercadolibre.com/sites/MLB/search?q={termo_busca}&limit=50"
@@ -588,7 +591,7 @@ def buscar_bug_preco(termo_busca=None):
                 if p_orig and p_atual > 0:
                     p_orig = float(p_orig)
                     desconto = ((p_orig - p_atual) / p_orig) * 100
-                    if desconto >= 35 and p_orig >= 50:
+                    if desconto >= 30 and p_orig >= 40:
                         bugs.append((p, desconto))
             
             if bugs:
@@ -601,7 +604,7 @@ def buscar_bug_preco(termo_busca=None):
                 link_original = produto.get("permalink", "")
                 sold_qty = produto.get("sold_quantity", 0)
                 
-                destaque_vendas = f"🚨 *OFERTA IMPERDÍVEL / BUG DE PREÇO ({sold_qty}+ vendidos)*\n" if sold_qty >= 10 else ""
+                destaque_vendas = f"🚨 *ALERTA DE BUG DE PREÇO / DESCONTO ALTO ({sold_qty}+ vendidos)*\n" if sold_qty >= 5 else "🚨 *ALERTA DE BUG DE PREÇO DETECTADO!*\n"
 
                 thumbnail = produto.get("thumbnail") or ""
                 foto = thumbnail.replace("-I.jpg", "-O.jpg").replace("-I.webp", "-O.jpg")
@@ -611,13 +614,13 @@ def buscar_bug_preco(termo_busca=None):
                 link_afiliado = f"{link_original}?matt_tool={TAG_MERCADO_LIVRE}" if "?" not in link_original else f"{link_original}&matt_tool={TAG_MERCADO_LIVRE}"
                 
                 return {
-                    "origem": "Mercado Livre [BUG / IMPERDÍVEL]",
-                    "titulo": f"🚨 OFERTA IMPERDÍVEL: {titulo}",
+                    "origem": "Mercado Livre [BUG DE PREÇO]",
+                    "titulo": f"🚨 BUG DE PREÇO: {titulo}",
                     "preco_atual": preco_atual,
                     "preco_original": preco_original,
                     "desconto": int(desconto_val),
                     "frete_gratis": produto.get("shipping", {}).get("free_shipping", False),
-                    "parcelamento": "💳 *Aproveite esta oferta imperdível agora!*",
+                    "parcelamento": "💳 *Aproveite antes que corrijam o erro de preço!*",
                     "vendas": destaque_vendas,
                     "link": link_afiliado,
                     "foto": foto
@@ -683,7 +686,7 @@ def buscar_oferta_mercadolivre(termo_busca=None):
                 if preco_original and preco_original > preco_atual:
                     desconto = int(((preco_original - preco_atual) / preco_original) * 100)
                 
-                destaque_vendas = f"🏆 *OFERTA IMPERDÍVEL 24H ({sold_qty}+ vendidos)*\n" if sold_qty >= 10 else ""
+                destaque_vendas = f"🏆 *OFERTA IMPERDÍVEL ({sold_qty}+ vendidos)*\n" if sold_qty >= 10 else ""
 
                 return {
                     "origem": "Mercado Livre",
@@ -818,7 +821,7 @@ def buscar_oferta_amazon(termo_busca=None):
                             "desconto": 0,
                             "frete_gratis": True,
                             "parcelamento": "💳 *Em até 10x no cartão*",
-                            "vendas": "🏆 *OFERTA IMPERDÍVEL AMAZON 24H*\n",
+                            "vendas": "🏆 *OFERTA IMPERDÍVEL AMAZON*\n",
                             "link": link_direto,
                             "foto": foto
                         })
@@ -873,7 +876,7 @@ def verificar_radar_desejos(oferta):
             except Exception as e:
                 logging.error(f"Erro ao enviar alerta privado do Radar: {e}")
 
-# --- PROCESSAR E FORMATAR MENSAGEM DE OFERTA IMPERDÍVEL ---
+# --- PROCESSAR E FORMATAR MENSAGEM DE OFERTA / ALERTA DE BUG ---
 def processar_e_enviar(oferta):
     if not oferta or not oferta.get('foto'):
         logging.warning("⚠️ Oferta descartada por não possuir imagem real.")
@@ -901,17 +904,17 @@ def processar_e_enviar(oferta):
     preco_orig_texto = f"❌ De: R$ {preco_orig:.2f}\n" if (preco_orig and preco_orig > oferta['preco_atual']) else ""
 
     gatilhos_urgencia = [
-        "⚡ OFERTA IMPERDÍVEL 24H - RESTAM POUCAS UNIDADES!",
-        "⏳ ALTA PROCURA! GARANTA SUA OFERTA IMPERDÍVEL AGORA!",
-        "🔥 PRODUTO CAMPEÃO! ESTOQUE BAIXANDO RÁPIDO!",
-        "🚨 OFERTA IMPERDÍVEL! GARANTA O SEU ANTES QUE ACABE!",
-        "⏰ GRUPO ATIVO 24H - CORRA PARA APROVEITAR!"
+        "🚨 ALERTA DE BUG DE PREÇO - CORRA ANTES QUE CORRIJAM!",
+        "⚡ OFERTA IMPERDÍVEL - MAIS DE 10 POSTS/DIA!",
+        "⏳ ERRO DE PREÇO / BUG DETECTADO - ESTOQUE LIMITADO!",
+        "🔥 PRODUTO CAMPEÃO EM PROMOÇÃO RELÂMPAGO!",
+        "⏰ GRUPO ATIVO MANDANDO OFERTAS E BUGS SEM PARAR!"
     ]
     urgencia_texto = f"⚠️ *{random.choice(gatilhos_urgencia)}*\n"
 
-    if "BUG" in oferta['origem'] or desconto >= 35:
+    if "BUG" in oferta['origem'] or desconto >= 30:
         mensagem = (
-            "🚨 *OFERTA IMPERDÍVEL / BUG DE PREÇO 24H!* 🚨\n\n"
+            "🚨 *ALERTA DE BUG DE PREÇO!* 🚨\n\n"
             f"{selo_historico}"
             f"{vendas_texto}"
             f"{copy_texto}"
@@ -922,13 +925,13 @@ def processar_e_enviar(oferta):
             f"{frete_texto}"
             f"{comparacao_texto}"
             f"{urgencia_texto}"
-            "⚡️ *CORRA! Oferta imperdível no ar!*"
+            "⚡️ *CORRA! Preço bugado pode ser corrigido a qualquer momento!*"
         )
-        texto_botao = f"🔥 PEGAR OFERTA IMPERDÍVEL NA {oferta['origem'].upper()} ({desconto}% OFF)"
+        texto_botao = f"🚨 APROVEITAR BUG NA {oferta['origem'].upper()} ({desconto}% OFF)"
     elif "fadadoscupons" in oferta['origem'].lower():
         preco_formatado = f"💰 *Preço:* R$ {oferta['preco_atual']:.2f}\n" if oferta['preco_atual'] > 0 else ""
         mensagem = (
-            "🧚‍♀️ *OFERTA IMPERDÍVEL DA FADA DOS CUPONS 24H!* 🧚‍♀️\n\n"
+            "🧚‍♀️ *OFERTA IMPERDÍVEL DA FADA DOS CUPONS!* 🧚‍♀️\n\n"
             f"{selo_historico}"
             f"{vendas_texto}"
             f"📦 *{oferta['titulo']}*\n"
@@ -936,16 +939,16 @@ def processar_e_enviar(oferta):
             f"{parcelas_texto}"
             f"{frete_texto}"
             f"{urgencia_texto}"
-            "⚡️ *Aproveite antes que a oferta imperdível acabe!*"
+            "⚡️ *Aproveite a oferta antes que expire!*"
         )
-        texto_botao = "🛒 VER OFERTA IMPERDÍVEL DA FADA"
+        texto_botao = "🛒 VER OFERTA DA FADA DOS CUPONS"
     else:
         preco_texto = f"💰 *Preço:* R$ {oferta['preco_atual']:.2f}"
         if preco_orig_texto:
             preco_texto = f"{preco_orig_texto}💰 *Por apenas:* R$ {oferta['preco_atual']:.2f}"
         
         mensagem = (
-            f"🔥 *OFERTA IMPERDÍVEL 24H ({oferta['origem'].upper()})!* 🔥\n\n"
+            f"🔥 *OFERTA IMPERDÍVEL ({oferta['origem'].upper()})!* 🔥\n\n"
             f"{selo_historico}"
             f"{vendas_texto}"
             f"{copy_texto}"
@@ -955,9 +958,9 @@ def processar_e_enviar(oferta):
             f"{frete_texto}"
             f"{comparacao_texto}"
             f"{urgencia_texto}"
-            "⚡️ *Clique no botão abaixo para garantir esta oferta imperdível!*"
+            "⚡️ *Clique no botão abaixo para garantir sua oferta!*"
         )
-        texto_botao = f"🛒 PEGAR OFERTA IMPERDÍVEL NA {oferta['origem'].upper()}"
+        texto_botao = f"🛒 PEGAR OFERTA NA {oferta['origem'].upper()}"
 
     return enviar_telegram_com_botao(
         foto_url=oferta.get('foto'),
@@ -966,8 +969,15 @@ def processar_e_enviar(oferta):
         url_botao=oferta['link']
     )
 
-# --- FUNÇÃO PRINCIPAL DE DISPARO DE OFERTA IMPERDÍVEL ---
+# --- FUNÇÃO PRINCIPAL DE DISPARO DE OFERTA / ALERTA DE BUG ---
 def enviar_oferta_telegram():
+    # Alterna periodicamente para dar prioridade a ALERTA DE BUG DE PREÇO
+    if random.random() < 0.4:
+        bug = buscar_bug_preco()
+        if bug and bug.get("foto"):
+            if processar_e_enviar(bug):
+                return True
+
     buscadores = [
         buscar_bug_preco,
         buscar_oferta_mercadolivre,
@@ -1019,7 +1029,7 @@ def escutar_comandos_telegram():
                             
                             msg_boas_vindas_grupo = (
                                 f"👋 *Seja muito bem-vindo(a), {nome_membro}!* 🎉\n\n"
-                                f"🔥 Nosso grupo fica LIGADO 24 HORAS por dia enviando OFERTAS IMPERDÍVEIS em Ferramentas, Celulares, Fones de Ouvido e Cupons em tempo real!"
+                                f"🔥 Nosso grupo publica MAIS DE 10 OFERTAS POR DIA e ALERTAS DE BUGS DE PREÇO em tempo real!"
                             )
                             try:
                                 requests.post(
@@ -1037,7 +1047,7 @@ def escutar_comandos_telegram():
                         try:
                             requests.post(
                                 f"https://api.telegram.org/bot{TOKEN_BOT}/sendMessage",
-                                json={"chat_id": chat_id, "text": "📸 *Imagem recebida!* Analisando a oferta imperdível com IA Gemini...", "parse_mode": "Markdown"}
+                                json={"chat_id": chat_id, "text": "📸 *Imagem recebida!* Analisando a imagem com IA Gemini para achar a melhor oferta ou bug...", "parse_mode": "Markdown"}
                             )
 
                             file_id = photos[-1].get("file_id")
@@ -1053,7 +1063,7 @@ def escutar_comandos_telegram():
                                     if nome_identificado:
                                         msg_ident = (
                                             f"🤖 *Produto Identificado pela IA:* {nome_identificado}\n\n"
-                                            "🔎 Buscando a oferta imperdível pelo menor preço..."
+                                            "🔎 Buscando ofertas e bugs pelo menor preço..."
                                         )
                                         requests.post(
                                             f"https://api.telegram.org/bot{TOKEN_BOT}/sendMessage",
@@ -1083,12 +1093,12 @@ def escutar_comandos_telegram():
                                             frete_str = "📦 Frete Grátis!" if melhor_of.get('frete_gratis') else ""
 
                                             msg_resultado = (
-                                                f"🏆 *OFERTA IMPERDÍVEL ENCONTRADA PARA:* {nome_identificado}\n\n"
+                                                f"🏆 *OFERTA ENCONTRADA:* {nome_identificado}\n\n"
                                                 f"📦 *Produto:* {melhor_of['titulo']}\n"
                                                 f"🏪 *Loja:* {melhor_of['origem']}\n"
                                                 f"💰 *Preço:* R$ {melhor_of['preco_atual']:.2f}{desc_str}\n"
                                                 f"{frete_str}\n\n"
-                                                f"👉 [Clique para comprar esta oferta imperdível!]({melhor_of['link']})"
+                                                f"👉 [Clique para comprar pelo menor preço!]({melhor_of['link']})"
                                             )
                                             requests.post(
                                                 f"https://api.telegram.org/bot{TOKEN_BOT}/sendMessage",
@@ -1097,7 +1107,7 @@ def escutar_comandos_telegram():
                                         else:
                                             requests.post(
                                                 f"https://api.telegram.org/bot{TOKEN_BOT}/sendMessage",
-                                                json={"chat_id": chat_id, "text": f"❌ Não encontramos ofertas imperdíveis para *{nome_identificado}* no momento.", "parse_mode": "Markdown"}
+                                                json={"chat_id": chat_id, "text": f"❌ Não encontramos ofertas para *{nome_identificado}* no momento.", "parse_mode": "Markdown"}
                                             )
                                     else:
                                         requests.post(
@@ -1111,12 +1121,13 @@ def escutar_comandos_telegram():
                     if text.startswith("/start"):
                         nome_usuario = limpar_markdown(from_user.get("first_name", "Usuário"))
                         boas_vindas = (
-                            f"👋 *Olá, {nome_usuario}! O Grupo fica ligado 24 HORAS enviando Ofertas Imperdíveis!* 🎉\n\n"
-                            "📸 *Leitor de Imagem por IA:* Envie uma foto e achamos a melhor oferta imperdível!\n"
+                            f"👋 *Olá, {nome_usuario}! Bot enviando MAIS DE 10 OFERTAS POR DIA e Alertas de Bug!* 🎉\n\n"
+                            "📸 *Leitor de Imagem por IA:* Envie uma foto e achamos a melhor oferta!\n"
                             "• `/cupom <loja>` para buscar cupons.\n"
-                            "• `/desejo produto, preco` para radar de ofertas 24h.\n"
+                            "• `/bug` para buscar e disparar um Alerta de Bug imediato.\n"
+                            "• `/desejo produto, preco` para radar de ofertas.\n"
                             "• `/oferta` para disparar uma oferta imperdível agora.\n"
-                            "• `/intervalo <minutos>` para ajustar a frequência."
+                            "• `/intervalo <minutos>` para ajustar o tempo entre ofertas."
                         )
                         requests.post(f"https://api.telegram.org/bot{TOKEN_BOT}/sendMessage", json={"chat_id": user_id, "text": boas_vindas, "parse_mode": "Markdown"})
 
@@ -1126,12 +1137,12 @@ def escutar_comandos_telegram():
                         cupom = buscar_cupons_confiaveis(termo)
                         
                         msg_cupom = (
-                            f"🎟️ *CUPOM IMPERDÍVEL 24H* 🎟️\n\n"
+                            f"🎟️ *CUPOM DISPONÍVEL* 🎟️\n\n"
                             f"🏪 *Loja:* {cupom['loja']}\n"
                             f"🏷️ *Cupom / Oferta:* `{cupom['cupom']}`\n"
                             f"💰 *Desconto:* {cupom['desconto']}\n"
                             f"ℹ️ *Detalhes:* {cupom['descricao']}\n\n"
-                            f"👉 [Clique para Resgatar Oferta Imperdível]({cupom['link']})"
+                            f"👉 [Clique para Resgatar Oferta]({cupom['link']})"
                         )
                         requests.post(f"https://api.telegram.org/bot{TOKEN_BOT}/sendMessage", json={"chat_id": user_id, "text": msg_cupom, "parse_mode": "Markdown", "disable_web_page_preview": False})
 
@@ -1140,15 +1151,16 @@ def escutar_comandos_telegram():
 
                     elif text.startswith("/oferta") or text.startswith("/status") or text.startswith("/ping"):
                         enviar_oferta_telegram()
-                        requests.post(f"https://api.telegram.org/bot{TOKEN_BOT}/sendMessage", json={"chat_id": user_id, "text": "📦 *Oferta imperdível enviada para o canal!*", "parse_mode": "Markdown"})
+                        requests.post(f"https://api.telegram.org/bot{TOKEN_BOT}/sendMessage", json={"chat_id": user_id, "text": "📦 *Oferta/Bug disparado com sucesso para o canal!*", "parse_mode": "Markdown"})
 
                     elif text.startswith("/bug") or text.startswith("/bugs"):
                         oferta_bug = buscar_bug_preco()
                         if oferta_bug:
                             processar_e_enviar(oferta_bug)
-                            resp_text = "🚨 *Oferta imperdível / Bug de preço enviado para o canal!*"
+                            resp_text = "🚨 *ALERTA DE BUG DE PREÇO enviado para o canal!*"
                         else:
-                            resp_text = "⚠️ Buscando ofertas imperdíveis no radar automático!"
+                            enviar_oferta_telegram()
+                            resp_text = "🚨 *Alerta de oferta/bug processado com sucesso!*"
                         requests.post(f"https://api.telegram.org/bot{TOKEN_BOT}/sendMessage", json={"chat_id": user_id, "text": resp_text, "parse_mode": "Markdown"})
 
                     elif text.startswith("/intervalo") or text.startswith("/tempo"):
@@ -1158,9 +1170,9 @@ def escutar_comandos_telegram():
                             if minutos <= 0:
                                 raise ValueError
                             INTERVALO_POSTAGEM = int(minutos * 60)
-                            resp_text = f"⏱️ *Intervalo alterado com sucesso!*\nO grupo enviará ofertas imperdíveis a cada *{minutos} minuto(s)* 24 horas por dia."
+                            resp_text = f"⏱️ *Intervalo alterado com sucesso!*\nO grupo enviará ofertas e bugs a cada *{minutos} minuto(s)*."
                         except Exception:
-                            resp_text = "❌ Formato inválido! Use: `/intervalo 1`"
+                            resp_text = "❌ Formato inválido! Use: `/intervalo 5` (ex: 5 minutos)"
                         
                         requests.post(f"https://api.telegram.org/bot{TOKEN_BOT}/sendMessage", json={"chat_id": user_id, "text": resp_text, "parse_mode": "Markdown"})
 
@@ -1173,7 +1185,7 @@ def escutar_comandos_telegram():
                             
                             RADAR_DESEJOS.append({"user_id": user_id, "termo": termo, "preco_max": preco_max})
                             
-                            resp_text = f"✅ *Alerta 24h Registrado!* Te avisarei assim que surgir oferta imperdível de *{limpar_markdown(termo)}* por até R$ {preco_max:.2f}!"
+                            resp_text = f"✅ *Alerta Registrado!* Te avisarei assim que surgir oferta ou bug de *{limpar_markdown(termo)}* por até R$ {preco_max:.2f}!"
                         except Exception:
                             resp_text = "❌ Use: `/desejo produto, preco`"
                         
@@ -1192,14 +1204,14 @@ def rodar_loop_fada_dos_cupons():
             logging.error(f"Erro no loop Fada dos Cupons: {e}")
         time.sleep(120)
 
-# --- LOOP AUTOMÁTICO 24 HORAS ENVIANDO OFERTAS IMPERDÍVEIS ---
+# --- LOOP AUTOMÁTICO DE ENVIOS DE OFERTAS (+10 OFERTAS POR DIA E ALERTAS DE BUG) ---
 def rodar_loop_ofertas():
-    logging.info("🚀 Grupo 24 HORAS LIGADO enviando ofertas imperdíveis sem parar!")
+    logging.info("🚀 Envio automático ativado: garantindo mais de 10 ofertas/bugs por dia!")
     while True:
         try:
             enviar_oferta_telegram()
         except Exception as e:
-            logging.error(f"Erro no loop de ofertas imperdíveis 24h: {e}")
+            logging.error(f"Erro no loop de ofertas e bugs: {e}")
         time.sleep(INTERVALO_POSTAGEM)
 
 if __name__ == '__main__':
@@ -1210,7 +1222,7 @@ if __name__ == '__main__':
     t_ping = Thread(target=auto_ping, daemon=True)
     t_ping.start()
 
-    # Thread do Loop Automático de Ofertas Imperdíveis 24h
+    # Thread do Loop Automático (+10 Ofertas / dia e Alertas de Bug)
     t_ofertas = Thread(target=rodar_loop_ofertas, daemon=True)
     t_ofertas.start()
 
@@ -1222,6 +1234,6 @@ if __name__ == '__main__':
     t_cmd = Thread(target=escutar_comandos_telegram, daemon=True)
     t_cmd.start()
     
-    # Mantém a thread principal viva para garantir operação 24/7
+    # Mantém a thread principal viva para garantir operação contínua
     while True:
         time.sleep(60)

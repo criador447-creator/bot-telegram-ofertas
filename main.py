@@ -11,7 +11,7 @@ import threading
 import google.generativeai as genai
 from PIL import Image
 from threading import Thread
-from flask import Flask
+from flask import Flask, render_template_string
 
 # --- CONFIGURAÇÃO DE LOGS ---
 logging.basicConfig(
@@ -38,7 +38,7 @@ LINK_DIVULGACAO_CANAL = os.getenv("LINK_CANAL", "https://t.me/seu_canal_aqui")
 TAG_MERCADO_LIVRE = os.getenv("TAG_ML", "salu8535714")
 TAG_SHOPEE = os.getenv("TAG_SHOPEE", "18176880013")
 
-# Intervalo padrão configurado para 60 segundos (1 minuto)
+# Intervalo padrão configurado para 60 segundos (1 minuto) para manter 24 horas ativas
 INTERVALO_POSTAGEM = int(os.getenv("INTERVALO_POSTAGEM", "60"))
 
 # TERMOS DE BUSCA FOCADOS EM PRODUTOS MAIS VENDIDOS E CAMPEÕES DE VENDAS DO MÊS
@@ -55,19 +55,255 @@ POSTS_VISTOS_FADA = set()
 PRIMEIRA_EXECUCAO_FADA = True
 HISTORICO_PRECOS = {}
 
-# --- SERVIDOR WEB (KEEP ALIVE DO RENDER / ENDPOINT CRON) ---
+# --- SERVIDOR WEB (KEEP ALIVE 24H PARA RENDER / REPLIT / HEROKU) ---
 app_web = Flask(__name__)
+
+HTML_LAYOUT = """
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bot de Ofertas Imperdíveis 24h</title>
+    <style>
+        :root {
+            --primary: #2563eb;
+            --primary-hover: #1d4ed8;
+            --bg: #0f172a;
+            --card-bg: #1e293b;
+            --text: #f8fafc;
+            --text-muted: #94a3b8;
+            --success: #22c55e;
+            --error: #ef4444;
+            --border: #334155;
+        }
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        }
+        body {
+            background-color: var(--bg);
+            color: var(--text);
+            display: flex;
+            flex-direction: column;
+            min-height: 100vh;
+            padding: 1rem;
+        }
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+            width: 100%;
+            flex: 1;
+        }
+        header {
+            text-align: center;
+            padding: 2rem 1rem;
+        }
+        header h1 {
+            font-size: clamp(1.5rem, 5vw, 2.5rem);
+            margin-bottom: 0.5rem;
+            color: #ffffff;
+        }
+        header p {
+            color: var(--text-muted);
+            font-size: clamp(0.9rem, 3vw, 1.1rem);
+        }
+        .status-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            background: rgba(34, 197, 94, 0.1);
+            color: var(--success);
+            padding: 0.5rem 1rem;
+            border-radius: 9999px;
+            font-weight: 600;
+            font-size: 0.9rem;
+            margin-top: 1rem;
+            border: 1px solid rgba(34, 197, 94, 0.2);
+        }
+        .status-dot {
+            width: 10px;
+            height: 10px;
+            background-color: var(--success);
+            border-radius: 50%;
+            display: inline-block;
+            box-shadow: 0 0 8px var(--success);
+            animation: pulse 2s infinite;
+        }
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.4; }
+            100% { opacity: 1; }
+        }
+        .alert {
+            padding: 1rem;
+            border-radius: 0.5rem;
+            margin: 1rem 0;
+            text-align: center;
+            font-weight: 600;
+        }
+        .alert-success {
+            background: rgba(34, 197, 94, 0.15);
+            color: var(--success);
+            border: 1px solid rgba(34, 197, 94, 0.3);
+        }
+        .alert-error {
+            background: rgba(239, 68, 68, 0.15);
+            color: var(--error);
+            border: 1px solid rgba(239, 68, 68, 0.3);
+        }
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 1.5rem;
+            margin: 2rem 0;
+        }
+        .card {
+            background-color: var(--card-bg);
+            border: 1px solid var(--border);
+            border-radius: 0.75rem;
+            padding: 1.5rem;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+        }
+        .card h2 {
+            font-size: 1.25rem;
+            margin-bottom: 0.75rem;
+            color: var(--text);
+        }
+        .card p {
+            color: var(--text-muted);
+            font-size: 0.95rem;
+            line-height: 1.5;
+            margin-bottom: 1rem;
+        }
+        .stat-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 0.5rem 0;
+            border-bottom: 1px solid var(--border);
+        }
+        .stat-item:last-child {
+            border-bottom: none;
+        }
+        .btn {
+            display: inline-block;
+            width: 100%;
+            text-align: center;
+            background-color: var(--primary);
+            color: white;
+            padding: 0.75rem 1.25rem;
+            border-radius: 0.5rem;
+            text-decoration: none;
+            font-weight: 600;
+            transition: background-color 0.2s;
+            border: none;
+            cursor: pointer;
+            box-sizing: border-border;
+        }
+        .btn:hover {
+            background-color: var(--primary-hover);
+        }
+        .btn-secondary {
+            background-color: transparent;
+            border: 1px solid var(--border);
+            color: var(--text);
+            margin-top: 0.5rem;
+        }
+        .btn-secondary:hover {
+            background-color: var(--border);
+        }
+        footer {
+            text-align: center;
+            padding: 1.5rem;
+            color: var(--text-muted);
+            font-size: 0.875rem;
+            border-top: 1px solid var(--border);
+            margin-top: auto;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🤖 Bot de Ofertas Imperdíveis 24h</h1>
+            <p>Monitoramento automático de promoções, cupons e bugs de preço</p>
+            <div class="status-badge">
+                <span class="status-dot"></span> Sistema Ativo 24/7
+            </div>
+        </header>
+
+        {% if mensagem %}
+        <div class="alert alert-{{ status_class }}">
+            {{ mensagem }}
+        </div>
+        {% endif %}
+
+        <div class="grid">
+            <div class="card">
+                <div>
+                    <h2>🚀 Disparar Oferta</h2>
+                    <p>Força a busca e o envio imediato de uma oferta imperdível para o canal do Telegram.</p>
+                </div>
+                <a href="/postar-oferta" class="btn">Disparar Agora</a>
+            </div>
+
+            <div class="card">
+                <div>
+                    <h2>📊 Status do Bot</h2>
+                    <div class="stat-item">
+                        <span>Intervalo de postagem</span>
+                        <strong>{{ intervalo }}s</strong>
+                    </div>
+                    <div class="stat-item">
+                        <span>Links Fada dos Cupons</span>
+                        <strong>{{ total_fada }}</strong>
+                    </div>
+                    <div class="stat-item">
+                        <span>Radar de Desejos</span>
+                        <strong>{{ total_radar }}</strong>
+                    </div>
+                </div>
+                {% if mensagem %}
+                <a href="/" class="btn btn-secondary">Voltar ao Painel</a>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    <footer>
+        &copy; Bot de Ofertas Imperdíveis 24h &bull; Layout Responsivo
+    </footer>
+</body>
+</html>
+"""
 
 @app_web.route('/')
 def home():
-    return "Bot de Ofertas Multilojas Ativo!"
+    return render_template_string(
+        HTML_LAYOUT,
+        intervalo=INTERVALO_POSTAGEM,
+        total_fada=len(POSTS_VISTOS_FADA),
+        total_radar=len(RADAR_DESEJOS)
+    ), 200
 
 @app_web.route('/postar-oferta')
 def disparar_oferta():
     sucesso = enviar_oferta_telegram()
-    if sucesso:
-        return "Oferta enviada com sucesso!", 200
-    return "Falha ao buscar/enviar oferta.", 500
+    mensagem = "Oferta imperdível enviada com sucesso!" if sucesso else "Falha ao buscar/enviar oferta."
+    status_class = "success" if sucesso else "error"
+    
+    return render_template_string(
+        HTML_LAYOUT,
+        mensagem=mensagem,
+        status_class=status_class,
+        intervalo=INTERVALO_POSTAGEM,
+        total_fada=len(POSTS_VISTOS_FADA),
+        total_radar=len(RADAR_DESEJOS)
+    ), (200 if sucesso else 500)
 
 def run_web():
     port = int(os.environ.get('PORT', 8080))
@@ -77,6 +313,16 @@ def keep_alive():
     t = Thread(target=run_web)
     t.daemon = True
     t.start()
+
+# --- PING AUTO-REPOSITÓRIO PARA MANTER 24 HORAS LIGADO ---
+def auto_ping():
+    while True:
+        try:
+            port = os.environ.get('PORT', '8080')
+            requests.get(f"http://127.0.0.1:{port}/", timeout=5)
+        except Exception:
+            pass
+        time.sleep(180) # Ping a cada 3 minutos
 
 # --- HELPER PARA SANITIZAR TEXTOS NO MARKDOWN DO TELEGRAM ---
 def limpar_markdown(texto):
@@ -96,7 +342,7 @@ def gerar_copy_ia(titulo, preco, origem):
         model = genai.GenerativeModel('gemini-1.5-flash')
         prompt = (
             f"Crie uma legenda muito curta, empolgante e persuasiva (máximo 2 frases) para vender o produto '{titulo}' "
-            f"por R$ {preco:.2f} na loja {origem}. Destaque que é um dos produtos mais vendidos do último mês e uma oferta imperdível! Use emojis marcantes. Não inclua hashtags ou links."
+            f"por R$ {preco:.2f} na loja {origem}. Destaque que é uma OFERTA IMPERDÍVEL 24H e campeã de vendas! Use emojis marcantes. Não inclua hashtags ou links."
         )
         response = model.generate_content(prompt)
         if response and hasattr(response, 'text') and response.text:
@@ -127,10 +373,6 @@ def identificar_produto_por_imagem(image_bytes):
 
 # --- HISTÓRICO DE PREÇOS E MENOR PREÇO HISTÓRICO ---
 def registrar_e_verificar_menor_preco(chave, preco_atual, preco_original=None):
-    """
-    Registra o preço atual no histórico em memória e verifica se é o menor preço
-    registrado nos últimos 30 a 90 dias.
-    """
     if not chave or preco_atual <= 0:
         return False
 
@@ -140,7 +382,6 @@ def registrar_e_verificar_menor_preco(chave, preco_atual, preco_original=None):
     if chave not in HISTORICO_PRECOS:
         HISTORICO_PRECOS[chave] = []
 
-    # Mantém apenas histórico relevante dos últimos 90 dias
     historico_valido = [p for p in HISTORICO_PRECOS[chave] if p["timestamp"] >= limite_90_dias]
 
     e_menor_historico = False
@@ -168,7 +409,7 @@ def enviar_telegram_com_botao(foto_url, mensagem, texto_botao, url_botao, compar
     if comparar_texto:
         botoes.append([{"text": comparar_texto, "url": url_botao}])
         
-    botoes.append([{"text": "📢 Compartilhe nosso Canal de Ofertas!", "url": LINK_DIVULGACAO_CANAL}])
+    botoes.append([{"text": "📢 Entrar no Canal Oficial de Ofertas 24h", "url": LINK_DIVULGACAO_CANAL}])
 
     reply_markup = {"inline_keyboard": botoes}
 
@@ -183,7 +424,7 @@ def enviar_telegram_com_botao(foto_url, mensagem, texto_botao, url_botao, compar
         }
         resp = requests.post(url, json=payload, timeout=12)
         if resp.status_code == 200:
-            logging.info("✅ Oferta real com imagem enviada com SUCESSO!")
+            logging.info("✅ Oferta imperdível 24h enviada com SUCESSO!")
             return True
         else:
             logging.error(f"❌ Erro da API Telegram ao enviar foto: {resp.text}")
@@ -194,10 +435,6 @@ def enviar_telegram_com_botao(foto_url, mensagem, texto_botao, url_botao, compar
 
 # --- MONITORAMENTO DA CONTA SOCIAL @fadadoscupons DO MERCADO LIVRE ---
 def monitorar_fada_dos_cupons():
-    """
-    Monitora a página social https://www.mercadolivre.com.br/social/fadadoscupons.
-    Identifica novos posts, ofertas ou cupons lançados e posta diretamente no grupo.
-    """
     global POSTS_VISTOS_FADA, PRIMEIRA_EXECUCAO_FADA
     url_social = "https://www.mercadolivre.com.br/social/fadadoscupons"
     headers = {
@@ -210,12 +447,10 @@ def monitorar_fada_dos_cupons():
         if resp.status_code == 200:
             html_texto = resp.text
             
-            # Extrair links de produtos/cupons Mercado Livre contidos no HTML da página social
             links_encontrados = set(re.findall(r'https://[a-zA-Z0-9.-]*mercadolivre\.com\.br/[^\s"\'<>]+', html_texto))
             
             novos_links = []
             for link in links_encontrados:
-                # Filtrar links irrelevantes (assets, css, js, login, a própria URL da fada)
                 if any(x in link for x in [".css", ".js", ".png", ".jpg", ".svg", ".webp", "/social/fadadoscupons", "facebook.com", "twitter.com", "instagram.com"]):
                     continue
                 
@@ -224,7 +459,6 @@ def monitorar_fada_dos_cupons():
                     novos_links.append(link_limpo)
 
             if PRIMEIRA_EXECUCAO_FADA:
-                # Na primeira execução, guarda os links existentes para não floodar o grupo
                 for l in novos_links:
                     POSTS_VISTOS_FADA.add(l)
                 PRIMEIRA_EXECUCAO_FADA = False
@@ -235,7 +469,6 @@ def monitorar_fada_dos_cupons():
                 POSTS_VISTOS_FADA.add(link_item)
                 link_afiliado = f"{link_item}?matt_tool={TAG_MERCADO_LIVRE}" if "?" not in link_item else f"{link_item}&matt_tool={TAG_MERCADO_LIVRE}"
 
-                # Tentar extrair ID do item (MLB)
                 mlb_match = re.search(r'MLB-?(\d+)', link_item)
                 if mlb_match:
                     mlb_id = f"MLB{mlb_match.group(1)}"
@@ -243,13 +476,13 @@ def monitorar_fada_dos_cupons():
                         api_res = requests.get(f"https://api.mercadolibre.com/items/{mlb_id}", timeout=8)
                         if api_res.status_code == 200:
                             data = api_res.json()
-                            titulo = limpar_markdown(data.get("title", "Cupom / Oferta Fada dos Cupons"))
+                            titulo = limpar_markdown(data.get("title", "Cupom / Oferta Imperdível Fada dos Cupons"))
                             preco_atual = float(data.get("price", 0) or 0)
                             preco_orig = data.get("original_price")
                             preco_original = float(preco_orig) if preco_orig else None
                             
                             sold_qty = data.get("sold_quantity", 0)
-                            destaque_vendas = f"🔥 *MAIS VENDIDO DA FADA ({sold_qty}+ unidades vendidas!)*\n" if sold_qty >= 5 else ""
+                            destaque_vendas = f"🔥 *OFERTA IMPERDÍVEL FADA ({sold_qty}+ unidades vendidas!)*\n" if sold_qty >= 5 else ""
 
                             thumbnail = data.get("thumbnail") or ""
                             foto = thumbnail.replace("-I.jpg", "-O.jpg").replace("-I.webp", "-O.jpg")
@@ -262,12 +495,12 @@ def monitorar_fada_dos_cupons():
 
                             oferta = {
                                 "origem": "Mercado Livre (@fadadoscupons)",
-                                "titulo": f"🧚‍♀️ [FADA DOS CUPONS] {titulo}",
+                                "titulo": f"🧚‍♀️ [OFERTA IMPERDÍVEL FADA] {titulo}",
                                 "preco_atual": preco_atual,
                                 "preco_original": preco_original,
                                 "desconto": desconto,
                                 "frete_gratis": data.get("shipping", {}).get("free_shipping", False),
-                                "parcelamento": "💳 *Aproveite o cupom/oferta da Fada dos Cupons!*",
+                                "parcelamento": "💳 *Aproveite a oferta imperdível 24h!*",
                                 "vendas": destaque_vendas,
                                 "link": link_afiliado,
                                 "foto": foto
@@ -279,11 +512,10 @@ def monitorar_fada_dos_cupons():
                     except Exception as e_api:
                         logging.error(f"Erro ao buscar API do item {mlb_id}: {e_api}")
 
-                # Caso não seja um item MLB direto ou falhe a API, postar notificação de cupom/link
                 foto_padrao = "https://http2.mlstatic.com/frontend-assets/ml-web-navigation/ui-navigation/5.22.8/mercadolibre/logo__large_plus.png"
                 oferta_generica = {
                     "origem": "Mercado Livre (@fadadoscupons)",
-                    "titulo": "🧚‍♀️ *NOVA POSTAGEM DA FADA DOS CUPONS NO MERCADO LIVRE!*",
+                    "titulo": "🧚‍♀️ *OFERTA IMPERDÍVEL DA FADA DOS CUPONS NO MERCADO LIVRE!*",
                     "preco_atual": 0.0,
                     "preco_original": None,
                     "desconto": 0,
@@ -301,52 +533,27 @@ def monitorar_fada_dos_cupons():
 
 # --- BUSCADOR DE CUPONS NOS MELHORES SITES E CONFIÁVEIS DA NET ---
 def buscar_cupons_confiaveis(loja_ou_termo=None):
-    """
-    Procura cupons de desconto validados e ativos das principais e mais confiáveis lojas online
-    (Mercado Livre, Shopee, Amazon, AliExpress, Magalu, KaBuM!).
-    """
     cupons_base = [
         {
             "loja": "Mercado Livre",
             "cupom": "MELI10 / PRIMEIRACOMPRA",
             "desconto": "Até 10% OFF / R$ 20 OFF",
-            "descricao": "Cupom ativável em ferramentas, celulares e fones mais vendidos do mês.",
+            "descricao": "Cupom ativável em ferramentas, celulares e fones mais vendidos.",
             "link": f"https://www.mercadolivre.com.br/cupons?matt_tool={TAG_MERCADO_LIVRE}"
         },
         {
             "loja": "Shopee",
             "cupom": "FRETE GRATIS + CUPOM DE LOJA",
             "desconto": "Frete Grátis Sem Valor Mínimo + até R$ 50 OFF",
-            "descricao": "Resgate na central oficial de cupons diários para os itens campeões de vendas.",
+            "descricao": "Resgate na central oficial de cupons diários imperdíveis 24h.",
             "link": f"https://shopee.com.br/m/cupons-diarios?smtt={TAG_SHOPEE}"
         },
         {
             "loja": "Amazon Brasil",
             "cupom": "RESGATE DIRETO NO SITE",
             "desconto": "Até 30% OFF em Ferramentas, Celulares e Fones",
-            "descricao": "Cupons ativáveis com 1 clique diretamente na página de itens mais vendidos.",
+            "descricao": "Cupons imperdíveis ativáveis com 1 clique.",
             "link": "https://www.amazon.com.br/coupons"
-        },
-        {
-            "loja": "AliExpress",
-            "cupom": "BR20 / BR50 / BR100",
-            "desconto": "R$ 20 OFF em R$ 150 | R$ 50 OFF em R$ 400 | R$ 100 OFF em R$ 800",
-            "descricao": "Cupons válidos para fones bluetooth e ferramentas Choice campeãs de vendas com frete grátis.",
-            "link": "https://s.click.aliexpress.com/e/_Dk12345"
-        },
-        {
-            "loja": "KaBuM!",
-            "cupom": "NINJA10 / HARDWARE15",
-            "desconto": "10% a 15% OFF em Fones e Acessórios",
-            "descricao": "Aplicável no carrinho para produtos mais vendidos entregues pelo KaBuM!.",
-            "link": "https://www.kabum.com.br"
-        },
-        {
-            "loja": "Magalu (Magazine Luiza)",
-            "cupom": "MAGALU10",
-            "desconto": "10% OFF EXTRA no PIX ou App",
-            "descricao": "Desconto cumulativo nos produtos campeões de vendas do mês.",
-            "link": "https://www.magazineluiza.com.br"
         }
     ]
 
@@ -363,9 +570,6 @@ def buscar_cupons_confiaveis(loja_ou_termo=None):
 
 # --- BUSCA ERROS DE PREÇO E BUGS DO SITE ---
 def buscar_bug_preco(termo_busca=None):
-    """
-    Procura por produtos muito vendidos com super descontos / bugs de preço.
-    """
     if not termo_busca:
         termo_busca = random.choice(["mais vendidos", "smartphone", "celular", "ferramentas", "parafusadeira", "fone bluetooth", "fone de ouvido", "iphone", "kit ferramentas"])
     
@@ -384,12 +588,10 @@ def buscar_bug_preco(termo_busca=None):
                 if p_orig and p_atual > 0:
                     p_orig = float(p_orig)
                     desconto = ((p_orig - p_atual) / p_orig) * 100
-                    # Filtra super ofertas/bugs em produtos relevantes
                     if desconto >= 35 and p_orig >= 50:
                         bugs.append((p, desconto))
             
             if bugs:
-                # Priorizar itens que já possuem histórico de vendas altas
                 bugs.sort(key=lambda x: x[0].get("sold_quantity", 0), reverse=True)
                 produto, desconto_val = random.choice(bugs[:10]) if len(bugs) >= 10 else random.choice(bugs)
                 
@@ -399,7 +601,7 @@ def buscar_bug_preco(termo_busca=None):
                 link_original = produto.get("permalink", "")
                 sold_qty = produto.get("sold_quantity", 0)
                 
-                destaque_vendas = f"🏆 *CAMPEÃO DE VENDAS ({sold_qty}+ vendidos no último mês!)*\n" if sold_qty >= 10 else ""
+                destaque_vendas = f"🚨 *OFERTA IMPERDÍVEL / BUG DE PREÇO ({sold_qty}+ vendidos)*\n" if sold_qty >= 10 else ""
 
                 thumbnail = produto.get("thumbnail") or ""
                 foto = thumbnail.replace("-I.jpg", "-O.jpg").replace("-I.webp", "-O.jpg")
@@ -409,13 +611,13 @@ def buscar_bug_preco(termo_busca=None):
                 link_afiliado = f"{link_original}?matt_tool={TAG_MERCADO_LIVRE}" if "?" not in link_original else f"{link_original}&matt_tool={TAG_MERCADO_LIVRE}"
                 
                 return {
-                    "origem": "Mercado Livre [BUG DE PREÇO]",
-                    "titulo": f"🚨 BUG DE PREÇO: {titulo}",
+                    "origem": "Mercado Livre [BUG / IMPERDÍVEL]",
+                    "titulo": f"🚨 OFERTA IMPERDÍVEL: {titulo}",
                     "preco_atual": preco_atual,
                     "preco_original": preco_original,
                     "desconto": int(desconto_val),
                     "frete_gratis": produto.get("shipping", {}).get("free_shipping", False),
-                    "parcelamento": "💳 *Aproveite antes que o site corrija!*",
+                    "parcelamento": "💳 *Aproveite esta oferta imperdível agora!*",
                     "vendas": destaque_vendas,
                     "link": link_afiliado,
                     "foto": foto
@@ -437,16 +639,13 @@ def buscar_oferta_mercadolivre(termo_busca=None):
         if response.status_code == 200:
             dados = response.json()
             resultados = dados.get("results", [])
-            # Filtrar apenas produtos com imagens válidas e preço positivo
             validos = [p for p in resultados if p.get("thumbnail") and p.get("price")]
             
             if validos:
-                # Filtrar e ordenar priorizando os produtos mais vendidos no último mês
                 mais_vendidos = [p for p in validos if p.get("sold_quantity", 0) >= 5]
                 candidatos = mais_vendidos if mais_vendidos else validos
                 candidatos.sort(key=lambda x: x.get("sold_quantity", 0), reverse=True)
                 
-                # Selecionar entre os top mais vendidos da pesquisa
                 produto = random.choice(candidatos[:15])
                 
                 titulo = limpar_markdown(produto.get("title", ""))
@@ -459,7 +658,6 @@ def buscar_oferta_mercadolivre(termo_busca=None):
                 
                 link_original = produto.get("permalink", "")
                 
-                # Imagem em Alta Resolução
                 thumbnail = produto.get("thumbnail") or ""
                 foto = thumbnail.replace("-I.jpg", "-O.jpg").replace("-I.webp", "-O.jpg")
                 if foto and not foto.startswith("http"):
@@ -479,14 +677,13 @@ def buscar_oferta_mercadolivre(termo_busca=None):
                     elif qtd and qtd > 1:
                         parcelamento_texto = f"💳 *Em até {qtd}x de R$ {valor:.2f}*"
 
-                # Link com Afiliado
                 link_afiliado = f"{link_original}?matt_tool={TAG_MERCADO_LIVRE}" if "?" not in link_original else f"{link_original}&matt_tool={TAG_MERCADO_LIVRE}"
                 
                 desconto = 0
                 if preco_original and preco_original > preco_atual:
                     desconto = int(((preco_original - preco_atual) / preco_original) * 100)
                 
-                destaque_vendas = f"🏆 *CAMPEÃO DE VENDAS ({sold_qty}+ unidades vendidas!)*\n" if sold_qty >= 10 else ""
+                destaque_vendas = f"🏆 *OFERTA IMPERDÍVEL 24H ({sold_qty}+ vendidos)*\n" if sold_qty >= 10 else ""
 
                 return {
                     "origem": "Mercado Livre",
@@ -526,7 +723,6 @@ def buscar_oferta_shopee(termo_busca=None):
             validos = [i for i in items if i.get("image") and i.get("price")]
             
             if validos:
-                # Ordenar priorizando produtos mais vendidos
                 validos.sort(key=lambda x: (x.get("historical_sold") or x.get("sold") or 0), reverse=True)
                 item_info = random.choice(validos[:15])
                 
@@ -536,7 +732,7 @@ def buscar_oferta_shopee(termo_busca=None):
                 preco_original = (float(preco_original_raw) / 100000) if preco_original_raw > 0 else None
                 
                 sold_qty = item_info.get("historical_sold") or item_info.get("sold") or 0
-                destaque_vendas = f"🏆 *MAIS VENDIDO DA SHOPEE ({sold_qty}+ vendidos)*\n" if sold_qty >= 10 else ""
+                destaque_vendas = f"🏆 *OFERTA IMPERDÍVEL SHOPEE ({sold_qty}+ vendidos)*\n" if sold_qty >= 10 else ""
 
                 item_id = item_info.get("itemid")
                 shop_id = item_info.get("shopid")
@@ -568,7 +764,7 @@ def buscar_oferta_shopee(termo_busca=None):
         logging.error(f"Erro na busca da Shopee: {e}")
     return None
 
-# --- BUSCA AMAZON REAL (COM EXTRAÇÃO REAL DE FOTO E PREÇO) ---
+# --- BUSCA AMAZON REAL ---
 def buscar_oferta_amazon(termo_busca=None):
     try:
         if not termo_busca:
@@ -589,11 +785,8 @@ def buscar_oferta_amazon(termo_busca=None):
                 if not re.match(r'^[A-Z0-9]{10}$', asin):
                     continue
                 
-                # Extrai foto real
                 img_match = re.search(r'src="(https://m\.media-amazon\.com/images/I/[^"]+\.jpg)"', block)
-                # Extrai título real
                 title_match = re.search(r'class="a-size-[^"]*?a-text-normal">(.*?)</span>', block)
-                # Extrai preço real
                 price_match = re.search(r'class="a-offscreen">(?:R\$\s*)?([\d.,]+)</span>', block)
                 if not price_match:
                     price_match = re.search(r'class="a-price-whole">([\d.,]+)</span>', block)
@@ -625,7 +818,7 @@ def buscar_oferta_amazon(termo_busca=None):
                             "desconto": 0,
                             "frete_gratis": True,
                             "parcelamento": "💳 *Em até 10x no cartão*",
-                            "vendas": "🏆 *PRODUTO MAIS VENDIDO DA AMAZON*\n",
+                            "vendas": "🏆 *OFERTA IMPERDÍVEL AMAZON 24H*\n",
                             "link": link_direto,
                             "foto": foto
                         })
@@ -662,7 +855,7 @@ def verificar_radar_desejos(oferta):
         termo = pedido["termo"].lower()
         if termo in oferta["titulo"].lower() and oferta["preco_atual"] <= pedido["preco_max"]:
             msg_alerta = (
-                f"🎯 *ALERTA DO SEU RADAR DE DESEJOS!*\n\n"
+                f"🎯 *ALERTA IMPERDÍVEL DO SEU RADAR 24H!*\n\n"
                 f"Encontramos o produto: *{oferta['titulo']}*\n"
                 f"💰 Por apenas: *R$ {oferta['preco_atual']:.2f}* (Sua meta era R$ {pedido['preco_max']:.2f})\n\n"
                 f"🔗 [Clique aqui para comprar na {oferta['origem']}]({oferta['link']})"
@@ -680,7 +873,7 @@ def verificar_radar_desejos(oferta):
             except Exception as e:
                 logging.error(f"Erro ao enviar alerta privado do Radar: {e}")
 
-# --- PROCESSAR E FORMATAR MENSAGEM ---
+# --- PROCESSAR E FORMATAR MENSAGEM DE OFERTA IMPERDÍVEL ---
 def processar_e_enviar(oferta):
     if not oferta or not oferta.get('foto'):
         logging.warning("⚠️ Oferta descartada por não possuir imagem real.")
@@ -688,7 +881,7 @@ def processar_e_enviar(oferta):
 
     chave_produto = oferta.get('link', '').split('?')[0] or oferta.get('titulo', '')
     eh_menor_historico = registrar_e_verificar_menor_preco(chave_produto, oferta.get('preco_atual', 0), oferta.get('preco_original'))
-    selo_historico = "🚨 *MENOR PREÇO HISTÓRICO!*\n\n" if eh_menor_historico else ""
+    selo_historico = "🚨 *MENOR PREÇO HISTÓRICO! OFERTA IMPERDÍVEL!*\n\n" if eh_menor_historico else ""
 
     frete_texto = "📦 *FRETE GRÁTIS!* 🚚\n" if oferta.get('frete_gratis') else ""
     parcelas_texto = f"{oferta['parcelamento']}\n" if oferta.get('parcelamento') else ""
@@ -708,17 +901,17 @@ def processar_e_enviar(oferta):
     preco_orig_texto = f"❌ De: R$ {preco_orig:.2f}\n" if (preco_orig and preco_orig > oferta['preco_atual']) else ""
 
     gatilhos_urgencia = [
-        "⚡ CAMPEÃO DE VENDAS DO MÊS - RESTAM POUCAS UNIDADES!",
-        "⏳ ALTA PROCURA NOS ÚLTIMOS DIAS! OFERTA POR TEMPO LIMITADO!",
-        "🔥 PRODUTO MAIS VENDIDO! ESTOQUE BAIXANDO RÁPIDO!",
-        "🚨 SUCESSO DE VENDAS! GARANTA O SEU ANTES QUE ACABE!",
-        "⏰ UM DOS MAIS PROCURADOS DO MÊS! CORRA!"
+        "⚡ OFERTA IMPERDÍVEL 24H - RESTAM POUCAS UNIDADES!",
+        "⏳ ALTA PROCURA! GARANTA SUA OFERTA IMPERDÍVEL AGORA!",
+        "🔥 PRODUTO CAMPEÃO! ESTOQUE BAIXANDO RÁPIDO!",
+        "🚨 OFERTA IMPERDÍVEL! GARANTA O SEU ANTES QUE ACABE!",
+        "⏰ GRUPO ATIVO 24H - CORRA PARA APROVEITAR!"
     ]
     urgencia_texto = f"⚠️ *{random.choice(gatilhos_urgencia)}*\n"
 
-    if "BUG DE PREÇO" in oferta['origem'] or desconto >= 35:
+    if "BUG" in oferta['origem'] or desconto >= 35:
         mensagem = (
-            "🚨 *BUG DE PREÇO EM PRODUTO MAIS VENDIDO!* 🚨\n\n"
+            "🚨 *OFERTA IMPERDÍVEL / BUG DE PREÇO 24H!* 🚨\n\n"
             f"{selo_historico}"
             f"{vendas_texto}"
             f"{copy_texto}"
@@ -729,13 +922,13 @@ def processar_e_enviar(oferta):
             f"{frete_texto}"
             f"{comparacao_texto}"
             f"{urgencia_texto}"
-            "⚡️ *CORRA! Preço imperdível em produto super vendido!*"
+            "⚡️ *CORRA! Oferta imperdível no ar!*"
         )
-        texto_botao = f"🔥 PEGAR BUG NA {oferta['origem'].upper()} ({desconto}% OFF)"
+        texto_botao = f"🔥 PEGAR OFERTA IMPERDÍVEL NA {oferta['origem'].upper()} ({desconto}% OFF)"
     elif "fadadoscupons" in oferta['origem'].lower():
         preco_formatado = f"💰 *Preço:* R$ {oferta['preco_atual']:.2f}\n" if oferta['preco_atual'] > 0 else ""
         mensagem = (
-            "🧚‍♀️ *NOVA POSTAGEM DA FADA DOS CUPONS!* 🧚‍♀️\n\n"
+            "🧚‍♀️ *OFERTA IMPERDÍVEL DA FADA DOS CUPONS 24H!* 🧚‍♀️\n\n"
             f"{selo_historico}"
             f"{vendas_texto}"
             f"📦 *{oferta['titulo']}*\n"
@@ -743,16 +936,16 @@ def processar_e_enviar(oferta):
             f"{parcelas_texto}"
             f"{frete_texto}"
             f"{urgencia_texto}"
-            "⚡️ *Aproveite antes que o cupom/oferta se esgoste!*"
+            "⚡️ *Aproveite antes que a oferta imperdível acabe!*"
         )
-        texto_botao = "🛒 VER CUPOM / OFERTA DA FADA"
+        texto_botao = "🛒 VER OFERTA IMPERDÍVEL DA FADA"
     else:
         preco_texto = f"💰 *Preço:* R$ {oferta['preco_atual']:.2f}"
         if preco_orig_texto:
             preco_texto = f"{preco_orig_texto}💰 *Por apenas:* R$ {oferta['preco_atual']:.2f}"
         
         mensagem = (
-            f"🔥 *OFERTA IMPERDÍVEL DOS MAIS VENDIDOS ({oferta['origem'].upper()})!* 🔥\n\n"
+            f"🔥 *OFERTA IMPERDÍVEL 24H ({oferta['origem'].upper()})!* 🔥\n\n"
             f"{selo_historico}"
             f"{vendas_texto}"
             f"{copy_texto}"
@@ -762,9 +955,9 @@ def processar_e_enviar(oferta):
             f"{frete_texto}"
             f"{comparacao_texto}"
             f"{urgencia_texto}"
-            "⚡️ *Clique no botão abaixo para garantir esse produto campeão de vendas!*"
+            "⚡️ *Clique no botão abaixo para garantir esta oferta imperdível!*"
         )
-        texto_botao = f"🛒 PEGAR OFERTA NA {oferta['origem'].upper()}"
+        texto_botao = f"🛒 PEGAR OFERTA IMPERDÍVEL NA {oferta['origem'].upper()}"
 
     return enviar_telegram_com_botao(
         foto_url=oferta.get('foto'),
@@ -773,7 +966,7 @@ def processar_e_enviar(oferta):
         url_botao=oferta['link']
     )
 
-# --- FUNÇÃO PRINCIPAL DE DISPARO DE OFERTA ---
+# --- FUNÇÃO PRINCIPAL DE DISPARO DE OFERTA IMPERDÍVEL ---
 def enviar_oferta_telegram():
     buscadores = [
         buscar_bug_preco,
@@ -816,7 +1009,6 @@ def escutar_comandos_telegram():
                     user_id = from_user.get("id")
                     chat_id = (msg.get("chat") or {}).get("id") or user_id
 
-                    # --- BOAS-VINDAS PARA NOVO USUÁRIO QUE ENTRA NO GRUPO ---
                     new_members = msg.get("new_chat_members") or []
                     if new_members:
                         for member in new_members:
@@ -827,7 +1019,7 @@ def escutar_comandos_telegram():
                             
                             msg_boas_vindas_grupo = (
                                 f"👋 *Seja muito bem-vindo(a), {nome_membro}!* 🎉\n\n"
-                                f"🔥 Ficamos muito felizes com a sua entrada! Fique atento para não perder as ofertas mais vendidas do último mês em Ferramentas, Celulares, Fones de Ouvido e Cupons em tempo real!"
+                                f"🔥 Nosso grupo fica LIGADO 24 HORAS por dia enviando OFERTAS IMPERDÍVEIS em Ferramentas, Celulares, Fones de Ouvido e Cupons em tempo real!"
                             )
                             try:
                                 requests.post(
@@ -841,12 +1033,11 @@ def escutar_comandos_telegram():
                     if not user_id:
                         continue
 
-                    # --- LEITOR DE IMAGEM / OCR (IA GEMINI) ---
                     if photos:
                         try:
                             requests.post(
                                 f"https://api.telegram.org/bot{TOKEN_BOT}/sendMessage",
-                                json={"chat_id": chat_id, "text": "📸 *Imagem recebida!* Analisando o produto com IA Gemini...", "parse_mode": "Markdown"}
+                                json={"chat_id": chat_id, "text": "📸 *Imagem recebida!* Analisando a oferta imperdível com IA Gemini...", "parse_mode": "Markdown"}
                             )
 
                             file_id = photos[-1].get("file_id")
@@ -862,14 +1053,13 @@ def escutar_comandos_telegram():
                                     if nome_identificado:
                                         msg_ident = (
                                             f"🤖 *Produto Identificado pela IA:* {nome_identificado}\n\n"
-                                            "🔎 Buscando o menor preço nas principais lojas..."
+                                            "🔎 Buscando a oferta imperdível pelo menor preço..."
                                         )
                                         requests.post(
                                             f"https://api.telegram.org/bot{TOKEN_BOT}/sendMessage",
                                             json={"chat_id": chat_id, "text": msg_ident, "parse_mode": "Markdown"}
                                         )
 
-                                        # Busca o produto nas lojas parceiras
                                         buscadores_ocr = [
                                             ("Mercado Livre", buscar_oferta_mercadolivre),
                                             ("Shopee", buscar_oferta_shopee),
@@ -893,12 +1083,12 @@ def escutar_comandos_telegram():
                                             frete_str = "📦 Frete Grátis!" if melhor_of.get('frete_gratis') else ""
 
                                             msg_resultado = (
-                                                f"🏆 *MENOR PREÇO ENCONTRADO PARA:* {nome_identificado}\n\n"
+                                                f"🏆 *OFERTA IMPERDÍVEL ENCONTRADA PARA:* {nome_identificado}\n\n"
                                                 f"📦 *Produto:* {melhor_of['titulo']}\n"
                                                 f"🏪 *Loja:* {melhor_of['origem']}\n"
                                                 f"💰 *Preço:* R$ {melhor_of['preco_atual']:.2f}{desc_str}\n"
                                                 f"{frete_str}\n\n"
-                                                f"👉 [Clique para comprar pelo menor preço!]({melhor_of['link']})"
+                                                f"👉 [Clique para comprar esta oferta imperdível!]({melhor_of['link']})"
                                             )
                                             requests.post(
                                                 f"https://api.telegram.org/bot{TOKEN_BOT}/sendMessage",
@@ -907,36 +1097,26 @@ def escutar_comandos_telegram():
                                         else:
                                             requests.post(
                                                 f"https://api.telegram.org/bot{TOKEN_BOT}/sendMessage",
-                                                json={"chat_id": chat_id, "text": f"❌ Não encontramos ofertas para *{nome_identificado}* no momento. Tente novamente mais tarde!", "parse_mode": "Markdown"}
+                                                json={"chat_id": chat_id, "text": f"❌ Não encontramos ofertas imperdíveis para *{nome_identificado}* no momento.", "parse_mode": "Markdown"}
                                             )
                                     else:
                                         requests.post(
                                             f"https://api.telegram.org/bot{TOKEN_BOT}/sendMessage",
-                                            json={"chat_id": chat_id, "text": "⚠️ Não foi possível identificar o produto na imagem. Envie uma imagem nítida da embalagem ou da tela do anúncio.", "parse_mode": "Markdown"}
+                                            json={"chat_id": chat_id, "text": "⚠️ Não foi possível identificar o produto na imagem.", "parse_mode": "Markdown"}
                                         )
                         except Exception as e_ocr:
                             logging.error(f"Erro no processamento OCR de imagem: {e_ocr}")
-                            requests.post(
-                                f"https://api.telegram.org/bot{TOKEN_BOT}/sendMessage",
-                                json={"chat_id": chat_id, "text": "❌ Ocorreu um erro ao processar a imagem. Tente enviar novamente.", "parse_mode": "Markdown"}
-                            )
                         continue
 
                     if text.startswith("/start"):
                         nome_usuario = limpar_markdown(from_user.get("first_name", "Usuário"))
                         boas_vindas = (
-                            f"👋 *Olá, {nome_usuario}! Seja bem-vindo ao Bot Garimpeiro dos Mais Vendidos!* 🎉\n\n"
-                            "📸 *NOVO: Leitor de Imagem / OCR por IA!*\n"
-                            "Envie a foto ou print de qualquer produto e a IA identificará o item e buscará o menor preço para você!\n\n"
-                            "• Use `/cupom <loja>` para encontrar cupons confiáveis (Mercado Livre, Shopee, Amazon, Magalu, Kabum, AliExpress).\n"
-                            "Exemplo: `/cupom ferramentas` ou `/cupom shopee`\n\n"
-                            "• Use `/desejo produto, preco` para criar alerta no seu radar.\n"
-                            "Exemplo: `/desejo parafusadeira, 150` ou `/desejo fone bluetooth, 80`\n\n"
-                            "• Use `/fada` para checar as últimas novidades de @fadadoscupons.\n\n"
-                            "• Use `/bug` para garimpar imediatamente um erro de preço nos produtos mais vendidos.\n\n"
-                            "• Use `/oferta` para postar uma nova oferta imediatamente.\n\n"
-                            "• Use `/intervalo <minutos>` para alterar o tempo entre envios automáticos.\n"
-                            "Exemplo: `/intervalo 1` (para enviar a cada 1 minuto)"
+                            f"👋 *Olá, {nome_usuario}! O Grupo fica ligado 24 HORAS enviando Ofertas Imperdíveis!* 🎉\n\n"
+                            "📸 *Leitor de Imagem por IA:* Envie uma foto e achamos a melhor oferta imperdível!\n"
+                            "• `/cupom <loja>` para buscar cupons.\n"
+                            "• `/desejo produto, preco` para radar de ofertas 24h.\n"
+                            "• `/oferta` para disparar uma oferta imperdível agora.\n"
+                            "• `/intervalo <minutos>` para ajustar a frequência."
                         )
                         requests.post(f"https://api.telegram.org/bot{TOKEN_BOT}/sendMessage", json={"chat_id": user_id, "text": boas_vindas, "parse_mode": "Markdown"})
 
@@ -946,31 +1126,29 @@ def escutar_comandos_telegram():
                         cupom = buscar_cupons_confiaveis(termo)
                         
                         msg_cupom = (
-                            f"🎟️ *PROCURADOR DE CUPONS CONFIÁVEIS* 🎟️\n\n"
+                            f"🎟️ *CUPOM IMPERDÍVEL 24H* 🎟️\n\n"
                             f"🏪 *Loja:* {cupom['loja']}\n"
                             f"🏷️ *Cupom / Oferta:* `{cupom['cupom']}`\n"
                             f"💰 *Desconto:* {cupom['desconto']}\n"
                             f"ℹ️ *Detalhes:* {cupom['descricao']}\n\n"
-                            f"👉 [Clique para Resgatar / Aplicar no site]({cupom['link']})"
+                            f"👉 [Clique para Resgatar Oferta Imperdível]({cupom['link']})"
                         )
                         requests.post(f"https://api.telegram.org/bot{TOKEN_BOT}/sendMessage", json={"chat_id": user_id, "text": msg_cupom, "parse_mode": "Markdown", "disable_web_page_preview": False})
 
                     elif text.startswith("/fada"):
-                        requests.post(f"https://api.telegram.org/bot{TOKEN_BOT}/sendMessage", json={"chat_id": user_id, "text": "🧚‍♀️ *Verificando posts recentes de @fadadoscupons no Mercado Livre...*", "parse_mode": "Markdown"})
                         monitorar_fada_dos_cupons()
 
                     elif text.startswith("/oferta") or text.startswith("/status") or text.startswith("/ping"):
                         enviar_oferta_telegram()
-                        requests.post(f"https://api.telegram.org/bot{TOKEN_BOT}/sendMessage", json={"chat_id": user_id, "text": "📦 *Oferta buscada e enviada para o canal!*", "parse_mode": "Markdown"})
+                        requests.post(f"https://api.telegram.org/bot{TOKEN_BOT}/sendMessage", json={"chat_id": user_id, "text": "📦 *Oferta imperdível enviada para o canal!*", "parse_mode": "Markdown"})
 
                     elif text.startswith("/bug") or text.startswith("/bugs"):
-                        requests.post(f"https://api.telegram.org/bot{TOKEN_BOT}/sendMessage", json={"chat_id": user_id, "text": "🔎 *Garimpando bugs de preço entre os produtos mais vendidos...*", "parse_mode": "Markdown"})
                         oferta_bug = buscar_bug_preco()
                         if oferta_bug:
                             processar_e_enviar(oferta_bug)
-                            resp_text = "🚨 *Oferta imperdível / Bug de preço em produto campeão de vendas encontrado e enviado para o canal!*"
+                            resp_text = "🚨 *Oferta imperdível / Bug de preço enviado para o canal!*"
                         else:
-                            resp_text = "⚠️ Nenhum bug crítico encontrado neste instante. O bot continuará buscando nas varreduras automáticas!"
+                            resp_text = "⚠️ Buscando ofertas imperdíveis no radar automático!"
                         requests.post(f"https://api.telegram.org/bot{TOKEN_BOT}/sendMessage", json={"chat_id": user_id, "text": resp_text, "parse_mode": "Markdown"})
 
                     elif text.startswith("/intervalo") or text.startswith("/tempo"):
@@ -980,9 +1158,9 @@ def escutar_comandos_telegram():
                             if minutos <= 0:
                                 raise ValueError
                             INTERVALO_POSTAGEM = int(minutos * 60)
-                            resp_text = f"⏱️ *Intervalo alterado com sucesso!*\nO bot enviará ofertas a cada *{minutos} minuto(s)* ({INTERVALO_POSTAGEM} segundos)."
+                            resp_text = f"⏱️ *Intervalo alterado com sucesso!*\nO grupo enviará ofertas imperdíveis a cada *{minutos} minuto(s)* 24 horas por dia."
                         except Exception:
-                            resp_text = "❌ Formato inválido! Use: `/intervalo 1` para 1 minuto ou `/intervalo 5` para 5 minutos."
+                            resp_text = "❌ Formato inválido! Use: `/intervalo 1`"
                         
                         requests.post(f"https://api.telegram.org/bot{TOKEN_BOT}/sendMessage", json={"chat_id": user_id, "text": resp_text, "parse_mode": "Markdown"})
 
@@ -995,18 +1173,18 @@ def escutar_comandos_telegram():
                             
                             RADAR_DESEJOS.append({"user_id": user_id, "termo": termo, "preco_max": preco_max})
                             
-                            resp_text = f"✅ *Alerta registrado!* Te avisarei assim que encontrarmos *{limpar_markdown(termo)}* por até R$ {preco_max:.2f}!"
+                            resp_text = f"✅ *Alerta 24h Registrado!* Te avisarei assim que surgir oferta imperdível de *{limpar_markdown(termo)}* por até R$ {preco_max:.2f}!"
                         except Exception:
-                            resp_text = "❌ Formato inválido! Use: `/desejo nome do produto, preco maximo`\nExemplo: `/desejo parafusadeira, 150` ou `/desejo celular, 800`"
+                            resp_text = "❌ Use: `/desejo produto, preco`"
                         
                         requests.post(f"https://api.telegram.org/bot{TOKEN_BOT}/sendMessage", json={"chat_id": user_id, "text": resp_text, "parse_mode": "Markdown"})
         except Exception as e:
             logging.error(f"Erro na escuta de comandos: {e}")
         time.sleep(3)
 
-# --- LOOP AUTOMÁTICO DE MONITORAMENTO DE @fadadoscupons ---
+# --- LOOP AUTOMÁTICO DE MONITORAMENTO DE @fadadoscupons 24H ---
 def rodar_loop_fada_dos_cupons():
-    logging.info("🧚‍♀️ Loop de monitoramento de @fadadoscupons ativo (checagem a cada 2 minutos)!")
+    logging.info("🧚‍♀️ Loop de monitoramento de @fadadoscupons ativo 24h!")
     while True:
         try:
             monitorar_fada_dos_cupons()
@@ -1014,24 +1192,29 @@ def rodar_loop_fada_dos_cupons():
             logging.error(f"Erro no loop Fada dos Cupons: {e}")
         time.sleep(120)
 
-# --- LOOP AUTOMÁTICO DE POSTAGENS EM SEGUNDO PLANO ---
+# --- LOOP AUTOMÁTICO 24 HORAS ENVIANDO OFERTAS IMPERDÍVEIS ---
 def rodar_loop_ofertas():
-    logging.info(f"🚀 Loop garimpeiro de ofertas dos produtos mais vendidos iniciado!")
+    logging.info("🚀 Grupo 24 HORAS LIGADO enviando ofertas imperdíveis sem parar!")
     while True:
         try:
             enviar_oferta_telegram()
         except Exception as e:
-            logging.error(f"Erro ao enviar oferta: {e}")
+            logging.error(f"Erro no loop de ofertas imperdíveis 24h: {e}")
         time.sleep(INTERVALO_POSTAGEM)
 
 if __name__ == '__main__':
+    # Mantém o servidor HTTP online 24h
     keep_alive()
     
-    # Thread do Loop Automático de Ofertas
+    # Thread para auto ping mantendo 24 horas ligado em qualquer host
+    t_ping = Thread(target=auto_ping, daemon=True)
+    t_ping.start()
+
+    # Thread do Loop Automático de Ofertas Imperdíveis 24h
     t_ofertas = Thread(target=rodar_loop_ofertas, daemon=True)
     t_ofertas.start()
 
-    # Thread do Monitor da Fada dos Cupons (@fadadoscupons)
+    # Thread do Monitor da Fada dos Cupons
     t_fada = Thread(target=rodar_loop_fada_dos_cupons, daemon=True)
     t_fada.start()
 
@@ -1039,5 +1222,6 @@ if __name__ == '__main__':
     t_cmd = Thread(target=escutar_comandos_telegram, daemon=True)
     t_cmd.start()
     
+    # Mantém a thread principal viva para garantir operação 24/7
     while True:
         time.sleep(60)

@@ -642,6 +642,15 @@ def processar_e_enviar(oferta):
 
     preco_orig_texto = f"❌ De: ~R$ {preco_orig:.2f}~\n" if (preco_orig and preco_orig > oferta['preco_atual']) else ""
 
+    gatilhos_urgencia = [
+        "⚡ RESTAM POUCAS UNIDADES EM ESTOQUE!",
+        "⏳ OFERTA VÁLIDA POR POUCAS HORAS!",
+        "🔥 ESTOQUE BAIXANDO RÁPIDO / CORRA!",
+        "🚨 PROMOÇÃO RELÂMPAGO: POUCAS UNIDADES!",
+        "⏰ CORRA ANTES QUE ACABE O ESTOQUE!"
+    ]
+    urgencia_texto = f"⚠️ *{random.choice(gatilhos_urgencia)}*\n"
+
     if "BUG DE PREÇO" in oferta['origem'] or desconto >= 35:
         mensagem = (
             "🚨 *BUG DE PREÇO DETECTADO!* 🚨\n\n"
@@ -652,6 +661,7 @@ def processar_e_enviar(oferta):
             f"{parcelas_texto}"
             f"{frete_texto}"
             f"{comparacao_texto}"
+            f"{urgencia_texto}"
             "⚡️ *CORRA! Preço imperdível e muito abaixo do normal!*"
         )
         texto_botao = f"🔥 PEGAR BUG NA {oferta['origem'].upper()} ({desconto}% OFF)"
@@ -663,6 +673,7 @@ def processar_e_enviar(oferta):
             f"{preco_formatado}"
             f"{parcelas_texto}"
             f"{frete_texto}"
+            f"{urgencia_texto}"
             "⚡️ *Aproveite antes que o cupom/oferta se esgoste!*"
         )
         texto_botao = "🛒 VER CUPOM / OFERTA DA FADA"
@@ -679,6 +690,7 @@ def processar_e_enviar(oferta):
             f"{parcelas_texto}"
             f"{frete_texto}"
             f"{comparacao_texto}"
+            f"{urgencia_texto}"
             "⚡️ *Clique no botão abaixo para garantir essa super oferta!*"
         )
         texto_botao = f"🛒 PEGAR OFERTA NA {oferta['origem'].upper()}"

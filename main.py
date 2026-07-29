@@ -99,10 +99,11 @@ def gerar_copy_ia(titulo, preco, origem):
             f"por R$ {preco:.2f} na loja {origem}. Destaque que é um dos produtos mais vendidos do último mês e uma oferta imperdível! Use emojis marcantes. Não inclua hashtags ou links."
         )
         response = model.generate_content(prompt)
-        return limpar_markdown(response.text.strip()) if response and response.text else None
+        if response and hasattr(response, 'text') and response.text:
+            return limpar_markdown(response.text.strip())
     except Exception as e:
         logging.error(f"Erro ao gerar copy na IA: {e}")
-        return None
+    return None
 
 # --- IDENTIFICAR PRODUTO POR IMAGEM / OCR COM GEMINI ---
 def identificar_produto_por_imagem(image_bytes):
@@ -118,7 +119,7 @@ def identificar_produto_por_imagem(image_bytes):
             "Retorne APENAS o nome do produto de forma concisa para busca (máximo 6 palavras). Não inclua explicações ou pontuação extra."
         )
         response = model.generate_content([prompt, image])
-        if response and response.text:
+        if response and hasattr(response, 'text') and response.text:
             return limpar_markdown(response.text.strip())
     except Exception as e:
         logging.error(f"Erro ao identificar produto por imagem com Gemini: {e}")
@@ -393,8 +394,8 @@ def buscar_bug_preco(termo_busca=None):
                 produto, desconto_val = random.choice(bugs[:10]) if len(bugs) >= 10 else random.choice(bugs)
                 
                 titulo = limpar_markdown(produto.get("title", ""))
-                preco_atual = float(produto.get("price"))
-                preco_original = float(produto.get("original_price"))
+                preco_atual = float(produto.get("price", 0) or 0)
+                preco_original = float(produto.get("original_price", 0) or 0)
                 link_original = produto.get("permalink", "")
                 sold_qty = produto.get("sold_quantity", 0)
                 
@@ -464,7 +465,7 @@ def buscar_oferta_mercadolivre(termo_busca=None):
                 if foto and not foto.startswith("http"):
                     foto = f"https:{foto}" if foto.startswith("//") else f"https://{foto}"
                 
-                shipping = produto.get("shipping", {})
+                shipping = produto.get("shipping", {}) or {}
                 frete_gratis = shipping.get("free_shipping", False)
                 
                 installments = produto.get("installments")
@@ -515,10 +516,10 @@ def buscar_oferta_shopee(termo_busca=None):
         
         if response.status_code == 200:
             dados = response.json()
-            sections = dados.get("data", {}).get("sections", [])
+            sections = (dados.get("data") or {}).get("sections") or []
             items = []
             for sec in sections:
-                sec_items = sec.get("data", {}).get("item", [])
+                sec_items = (sec.get("data") or {}).get("item") or (sec.get("data") or {}).get("items") or []
                 if sec_items:
                     items.extend(sec_items)
                     
@@ -580,34 +581,28 @@ def buscar_oferta_amazon(termo_busca=None):
         }
         res = requests.get(url, headers=headers, timeout=10)
         if res.status_code == 200:
-            asins = list(set(re.findall(r'data-asin="([A-Z0-9]{10})"', res.text)))
-            random.shuffle(asins)
+            blocks = res.text.split('data-asin="')
+            candidates = []
             
-            for asin in asins:
-                if not asin:
+            for block in blocks[1:]:
+                asin = block[:10]
+                if not re.match(r'^[A-Z0-9]{10}$', asin):
                     continue
-                    
+                
                 # Extrai foto real
-                pattern_img = rf'data-asin="{asin}".*?src="(https://m\.media-amazon\.com/images/I/[^"]+\.jpg)"'
-                img_match = re.search(pattern_img, res.text, re.DOTALL)
-                
+                img_match = re.search(r'src="(https://m\.media-amazon\.com/images/I/[^"]+\.jpg)"', block)
                 # Extrai título real
-                pattern_title = rf'data-asin="{asin}".*?<span class="a-size-[^"]*?a-text-normal">(.*?)</span>'
-                title_match = re.search(pattern_title, res.text, re.DOTALL)
-                
+                title_match = re.search(r'class="a-size-[^"]*?a-text-normal">(.*?)</span>', block)
                 # Extrai preço real
-                pattern_price = rf'data-asin="{asin}".*?<span class="a-offscreen">(?:R\$\s*)?([\d.,]+)</span>'
-                price_match = re.search(pattern_price, res.text, re.DOTALL)
+                price_match = re.search(r'class="a-offscreen">(?:R\$\s*)?([\d.,]+)</span>', block)
                 if not price_match:
-                    pattern_price = rf'data-asin="{asin}".*?<span class="a-price-whole">([\d.,]+)</span>'
-                    price_match = re.search(pattern_price, res.text, re.DOTALL)
+                    price_match = re.search(r'class="a-price-whole">([\d.,]+)</span>', block)
                 
                 if img_match and title_match and price_match:
                     foto = img_match.group(1)
                     titulo = limpar_markdown(title_match.group(1))
                     preco_raw = price_match.group(1).strip()
                     
-                    # Converte preço no formato pt-BR (ex: "1.299,00" -> 1299.00)
                     if "," in preco_raw and "." in preco_raw:
                         preco_str = preco_raw.replace(".", "").replace(",", ".")
                     elif "," in preco_raw:
@@ -622,7 +617,7 @@ def buscar_oferta_amazon(termo_busca=None):
                     
                     if preco_atual > 0 and foto:
                         link_direto = f"https://www.amazon.com.br/dp/{asin}"
-                        return {
+                        candidates.append({
                             "origem": "Amazon",
                             "titulo": titulo,
                             "preco_atual": preco_atual,
@@ -633,7 +628,10 @@ def buscar_oferta_amazon(termo_busca=None):
                             "vendas": "🏆 *PRODUTO MAIS VENDIDO DA AMAZON*\n",
                             "link": link_direto,
                             "foto": foto
-                        }
+                        })
+            
+            if candidates:
+                return random.choice(candidates)
     except Exception as e:
         logging.error(f"Erro na busca da Amazon: {e}")
     return None
@@ -707,7 +705,7 @@ def processar_e_enviar(oferta):
     desconto = oferta.get('desconto', 0)
     preco_orig = oferta.get('preco_original')
 
-    preco_orig_texto = f"❌ De: ~R$ {preco_orig:.2f}~\n" if (preco_orig and preco_orig > oferta['preco_atual']) else ""
+    preco_orig_texto = f"❌ De: R$ {preco_orig:.2f}\n" if (preco_orig and preco_orig > oferta['preco_atual']) else ""
 
     gatilhos_urgencia = [
         "⚡ CAMPEÃO DE VENDAS DO MÊS - RESTAM POUCAS UNIDADES!",
@@ -720,7 +718,7 @@ def processar_e_enviar(oferta):
 
     if "BUG DE PREÇO" in oferta['origem'] or desconto >= 35:
         mensagem = (
-            "🚨 *BUG DE PREÇO EM PRODUTO MAIS VENDEDO!* 🚨\n\n"
+            "🚨 *BUG DE PREÇO EM PRODUTO MAIS VENDIDO!* 🚨\n\n"
             f"{selo_historico}"
             f"{vendas_texto}"
             f"{copy_texto}"
@@ -807,17 +805,19 @@ def escutar_comandos_telegram():
             url = f"https://api.telegram.org/bot{TOKEN_BOT}/getUpdates?offset={offset}&timeout=10"
             resp = requests.get(url, timeout=12)
             if resp.status_code == 200:
-                updates = resp.json().get("result", [])
+                res_data = resp.json()
+                updates = res_data.get("result", []) if isinstance(res_data, dict) else []
                 for u in updates:
-                    offset = u["update_id"] + 1
-                    msg = u.get("message", {})
-                    text = msg.get("text", "")
-                    photos = msg.get("photo", [])
-                    user_id = msg.get("from", {}).get("id")
-                    chat_id = msg.get("chat", {}).get("id", user_id)
+                    offset = u.get("update_id", 0) + 1
+                    msg = u.get("message") or u.get("edited_message") or {}
+                    text = msg.get("text") or ""
+                    photos = msg.get("photo") or []
+                    from_user = msg.get("from") or {}
+                    user_id = from_user.get("id")
+                    chat_id = (msg.get("chat") or {}).get("id") or user_id
 
                     # --- BOAS-VINDAS PARA NOVO USUÁRIO QUE ENTRA NO GRUPO ---
-                    new_members = msg.get("new_chat_members", [])
+                    new_members = msg.get("new_chat_members") or []
                     if new_members:
                         for member in new_members:
                             nome_membro = member.get("first_name", "Usuário")
@@ -923,7 +923,7 @@ def escutar_comandos_telegram():
                         continue
 
                     if text.startswith("/start"):
-                        nome_usuario = limpar_markdown(msg.get("from", {}).get("first_name", "Usuário"))
+                        nome_usuario = limpar_markdown(from_user.get("first_name", "Usuário"))
                         boas_vindas = (
                             f"👋 *Olá, {nome_usuario}! Seja bem-vindo ao Bot Garimpeiro dos Mais Vendidos!* 🎉\n\n"
                             "📸 *NOVO: Leitor de Imagem / OCR por IA!*\n"
@@ -1016,7 +1016,7 @@ def rodar_loop_fada_dos_cupons():
 
 # --- LOOP AUTOMÁTICO DE POSTAGENS EM SEGUNDO PLANO ---
 def rodar_loop_ofertas():
-    logging.info(f"🚀 Loop garimpeiro de ofertas dos produtos mais vendidos iniciado a cada {INTERVALO_POSTAGEM} segundos!")
+    logging.info(f"🚀 Loop garimpeiro de ofertas dos produtos mais vendidos iniciado!")
     while True:
         try:
             enviar_oferta_telegram()

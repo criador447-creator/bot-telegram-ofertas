@@ -47,10 +47,11 @@ CATEGORIAS_BUSCA = [
     "ofertas imperdiveis", "promocao relampago", "oferta do dia", "bugs de preco", "desconto imperdivel"
 ]
 
-# --- BANCO DE DADOS EM MEMÓRIA PARA O RADAR DE DESEJOS E MONITOR FADA DOS CUPONS ---
+# --- BANCO DE DADOS EM MEMÓRIA PARA O RADAR DE DESEJOS, HISTÓRICO DE PREÇOS E MONITOR FADA DOS CUPONS ---
 RADAR_DESEJOS = []
 POSTS_VISTOS_FADA = set()
 PRIMEIRA_EXECUCAO_FADA = True
+HISTORICO_PRECOS = {}
 
 # --- SERVIDOR WEB (KEEP ALIVE DO RENDER / ENDPOINT CRON) ---
 app_web = Flask(__name__)
@@ -125,6 +126,38 @@ def gerar_copy_ia(titulo, preco, origem):
     except Exception as e:
         logging.error(f"Erro ao gerar copy na IA: {e}")
         return None
+
+# --- HISTÓRICO DE PREÇOS E MENOR PREÇO HISTÓRICO ---
+def registrar_e_verificar_menor_preco(chave, preco_atual, preco_original=None):
+    """
+    Registra o preço atual no histórico em memória e verifica se é o menor preço
+    registrado nos últimos 30 a 90 dias.
+    """
+    if not chave or preco_atual <= 0:
+        return False
+
+    agora = time.time()
+    limite_90_dias = agora - (90 * 86400)
+
+    if chave not in HISTORICO_PRECOS:
+        HISTORICO_PRECOS[chave] = []
+
+    # Mantém apenas histórico relevante dos últimos 90 dias
+    historico_valido = [p for p in HISTORICO_PRECOS[chave] if p["timestamp"] >= limite_90_dias]
+
+    e_menor_historico = False
+    if historico_valido:
+        precos_anteriores = [p["preco"] for p in historico_valido]
+        menor_anterior = min(precos_anteriores)
+        if preco_atual <= menor_anterior:
+            e_menor_historico = True
+    elif preco_original and preco_atual < preco_original:
+        e_menor_historico = True
+
+    historico_valido.append({"timestamp": agora, "preco": preco_atual})
+    HISTORICO_PRECOS[chave] = historico_valido
+
+    return e_menor_historico
 
 # --- FUNÇÃO DE ENVIO PARA O TELEGRAM ---
 def enviar_telegram_com_botao(foto_url, mensagem, texto_botao, url_botao, comparar_texto=None):
@@ -626,6 +659,10 @@ def processar_e_enviar(oferta):
         logging.warning("⚠️ Oferta descartada por não possuir imagem real.")
         return False
 
+    chave_produto = oferta.get('link', '').split('?')[0] or oferta.get('titulo', '')
+    eh_menor_historico = registrar_e_verificar_menor_preco(chave_produto, oferta.get('preco_atual', 0), oferta.get('preco_original'))
+    selo_historico = "🚨 *MENOR PREÇO HISTÓRICO!*\n\n" if eh_menor_historico else ""
+
     frete_texto = "📦 *FRETE GRÁTIS!* 🚚\n" if oferta.get('frete_gratis') else ""
     parcelas_texto = f"{oferta['parcelamento']}\n" if oferta.get('parcelamento') else ""
     
@@ -654,6 +691,7 @@ def processar_e_enviar(oferta):
     if "BUG DE PREÇO" in oferta['origem'] or desconto >= 35:
         mensagem = (
             "🚨 *BUG DE PREÇO DETECTADO!* 🚨\n\n"
+            f"{selo_historico}"
             f"{copy_texto}"
             f"📦 *{oferta['titulo']}*\n"
             f"{preco_orig_texto}"
@@ -669,6 +707,7 @@ def processar_e_enviar(oferta):
         preco_formatado = f"💰 *Preço:* R$ {oferta['preco_atual']:.2f}\n" if oferta['preco_atual'] > 0 else ""
         mensagem = (
             "🧚‍♀️ *NOVA POSTAGEM DA FADA DOS CUPONS!* 🧚‍♀️\n\n"
+            f"{selo_historico}"
             f"📦 *{oferta['titulo']}*\n"
             f"{preco_formatado}"
             f"{parcelas_texto}"
@@ -684,6 +723,7 @@ def processar_e_enviar(oferta):
         
         mensagem = (
             f"🔥 *OFERTA IMPERDÍVEL ({oferta['origem'].upper()})!* 🔥\n\n"
+            f"{selo_historico}"
             f"{copy_texto}"
             f"📦 *{oferta['titulo']}*\n"
             f"{preco_texto}\n"

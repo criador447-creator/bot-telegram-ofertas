@@ -134,7 +134,7 @@ def registrar_e_verificar_menor_preco(chave, preco_atual, preco_original=None):
         return False
 
     agora = time.time()
-    limite_90_dias = me = agora - (90 * 86400)
+    limite_90_dias = agora - (90 * 86400)
 
     if chave not in HISTORICO_PRECOS:
         HISTORICO_PRECOS[chave] = []
@@ -934,7 +934,7 @@ def escutar_comandos_telegram():
                             "Exemplo: `/desejo parafusadeira, 150` ou `/desejo fone bluetooth, 80`\n\n"
                             "• Use `/fada` para checar as últimas novidades de @fadadoscupons.\n\n"
                             "• Use `/bug` para garimpar imediatamente um erro de preço nos produtos mais vendidos.\n\n"
-                            "• Use `/sinal` ou `/status` para postar uma nova oferta imediatamente.\n\n"
+                            "• Use `/oferta` para postar uma nova oferta imediatamente.\n\n"
                             "• Use `/intervalo <minutos>` para alterar o tempo entre envios automáticos.\n"
                             "Exemplo: `/intervalo 1` (para enviar a cada 1 minuto)"
                         )
@@ -959,7 +959,7 @@ def escutar_comandos_telegram():
                         requests.post(f"https://api.telegram.org/bot{TOKEN_BOT}/sendMessage", json={"chat_id": user_id, "text": "🧚‍♀️ *Verificando posts recentes de @fadadoscupons no Mercado Livre...*", "parse_mode": "Markdown"})
                         monitorar_fada_dos_cupons()
 
-                    elif text.startswith("/sinal") or text.startswith("/status") or text.startswith("/ping"):
+                    elif text.startswith("/oferta") or text.startswith("/status") or text.startswith("/ping"):
                         enviar_oferta_telegram()
                         requests.post(f"https://api.telegram.org/bot{TOKEN_BOT}/sendMessage", json={"chat_id": user_id, "text": "📦 *Oferta buscada e enviada para o canal!*", "parse_mode": "Markdown"})
 
@@ -1026,9 +1026,6 @@ def rodar_loop_ofertas():
 
 if __name__ == '__main__':
     keep_alive()
-    
-    # Envia oferta de produto imediatamente ao iniciar
-    enviar_oferta_telegram()
     
     # Thread do Loop Automático de Ofertas
     t_ofertas = Thread(target=rodar_loop_ofertas, daemon=True)

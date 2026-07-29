@@ -76,31 +76,6 @@ def keep_alive():
     t.daemon = True
     t.start()
 
-# --- SINAL DE FUNCIONAMENTO DO GRUPO ---
-def enviar_sinal_funcionamento():
-    """Envia um sinal de funcionamento diretamente para o grupo/canal."""
-    try:
-        url = f"https://api.telegram.org/bot{TOKEN_BOT}/sendMessage"
-        mensagem = (
-            "🟢 *SINAL DE FUNCIONAMENTO DO GRUPO*\n\n"
-            "✅ O Bot Garimpeiro de Ferramentas, Celulares, Fones e Campeões de Vendas (@fadadoscupons) está 100% ativo!\n"
-            "⚡️ Fique atento, as ofertas mais vendidas do último mês, promoções, cupons e bugs de preço serão postados em breve!"
-        )
-        payload = {
-            "chat_id": ID_CANAL,
-            "text": mensagem,
-            "parse_mode": "Markdown"
-        }
-        resp = requests.post(url, json=payload, timeout=10)
-        if resp.status_code == 200:
-            logging.info("✅ Sinal de funcionamento enviado com sucesso para o grupo!")
-            return True
-        else:
-            logging.error(f"❌ Falha ao enviar sinal de funcionamento: {resp.text}")
-    except Exception as e:
-        logging.error(f"❌ Exceção ao enviar sinal de funcionamento: {e}")
-    return False
-
 # --- HELPER PARA SANITIZAR TEXTOS NO MARKDOWN DO TELEGRAM ---
 def limpar_markdown(texto):
     if not texto:
@@ -853,7 +828,7 @@ def escutar_comandos_telegram():
                             "Exemplo: `/desejo parafusadeira, 150` ou `/desejo fone bluetooth, 80`\n\n"
                             "• Use `/fada` para checar as últimas novidades de @fadadoscupons.\n\n"
                             "• Use `/bug` para garimpar imediatamente um erro de preço nos produtos mais vendidos.\n\n"
-                            "• Use `/sinal` ou `/status` para checar o funcionamento do bot.\n\n"
+                            "• Use `/sinal` ou `/status` para postar uma nova oferta imediatamente.\n\n"
                             "• Use `/intervalo <minutos>` para alterar o tempo entre envios automáticos.\n"
                             "Exemplo: `/intervalo 1` (para enviar a cada 1 minuto)"
                         )
@@ -879,8 +854,8 @@ def escutar_comandos_telegram():
                         monitorar_fada_dos_cupons()
 
                     elif text.startswith("/sinal") or text.startswith("/status") or text.startswith("/ping"):
-                        enviar_sinal_funcionamento()
-                        requests.post(f"https://api.telegram.org/bot{TOKEN_BOT}/sendMessage", json={"chat_id": user_id, "text": "📡 *Sinal de funcionamento enviado para o grupo!*", "parse_mode": "Markdown"})
+                        enviar_oferta_telegram()
+                        requests.post(f"https://api.telegram.org/bot{TOKEN_BOT}/sendMessage", json={"chat_id": user_id, "text": "📦 *Oferta buscada e enviada para o canal!*", "parse_mode": "Markdown"})
 
                     elif text.startswith("/bug") or text.startswith("/bugs"):
                         requests.post(f"https://api.telegram.org/bot{TOKEN_BOT}/sendMessage", json={"chat_id": user_id, "text": "🔎 *Garimpando bugs de preço entre os produtos mais vendidos...*", "parse_mode": "Markdown"})
@@ -946,8 +921,8 @@ def rodar_loop_ofertas():
 if __name__ == '__main__':
     keep_alive()
     
-    # Envia sinal de funcionamento ao iniciar
-    enviar_sinal_funcionamento()
+    # Envia oferta de produto imediatamente ao iniciar
+    enviar_oferta_telegram()
     
     # Thread do Loop Automático de Ofertas
     t_ofertas = Thread(target=rodar_loop_ofertas, daemon=True)
